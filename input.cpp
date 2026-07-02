@@ -29,8 +29,10 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
                 grid[cy][cx] = EMPTY;
                 fluid_remove(fluid, cx, cy);
             } else if (state.mode == MODE_SOLID) {
+                fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SOLID;
             } else if (state.mode == MODE_SAND) {
+                fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SAND;
             } else {
                 fluid_add_density(fluid, cx, cy, 0.5f);

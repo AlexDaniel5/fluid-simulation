@@ -42,3 +42,7 @@ void fluid_add_density(FluidState& state, int x, int y, float amount);
 void fluid_add_velocity(FluidState& state, int x, int y, float vx, float vy);
 // Remove every fluid particle currently inside cell (x, y).
 void fluid_remove(FluidState& state, int x, int y);
+// Shift every particle in cell (x, y) into an adjacent open cell (sideways
+// preferred), e.g. before stamping solid material over them. Particles stay
+// put if all four neighbors are blocked.
+void fluid_displace(FluidState& state, int x, int y);

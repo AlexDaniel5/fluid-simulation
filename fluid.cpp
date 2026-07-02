@@ -356,6 +356,27 @@ void fluid_remove(FluidState& s, int x, int y) {
     s.particles.resize(w);
 }
 
+void fluid_displace(FluidState& s, int x, int y) {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return;
+    // Prefer sideways, then down, then up — pushing water above the stamped
+    // cell is the geyser direction and only happens when boxed in.
+    int side = (std::rand() & 1) ? 1 : -1;
+    const int off[4][2] = {{side, 0}, {-side, 0}, {0, 1}, {0, -1}};
+    int tx = x, ty = y;
+    for (int k = 0; k < 4; ++k) {
+        int cx = x + off[k][0], cy = y + off[k][1];
+        if (cx < 0 || cx >= GRID_WIDTH || cy < 0 || cy >= GRID_HEIGHT) continue;
+        if (grid[cy][cx] == EMPTY) { tx = cx; ty = cy; break; }
+    }
+    if (tx == x && ty == y) return;  // fully enclosed; advection pops them out
+    for (Particle& pt : s.particles) {
+        if ((int)pt.x == x && (int)pt.y == y) {
+            pt.x += (float)(tx - x);
+            pt.y += (float)(ty - y);
+        }
+    }
+}
+
 void fluid_add_velocity(FluidState& s, int x, int y, float vx, float vy) {
     float cx = x + 0.5f, cy = y + 0.5f;
     const float r2 = 1.5f * 1.5f;
