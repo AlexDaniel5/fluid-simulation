@@ -11,7 +11,8 @@ interact with each other under gravity.
   incompressible liquid with a real free surface (not just a diffused density field).
 - **Cellular-automaton sand** coupled to the liquid. Grains fall under gravity (terminal-capped,
   and slower underwater) and *displace* water rather than destroying it — water swaps into the
-  cell a grain vacates.
+  cell a grain vacates. Displaced water also inherits part of the grain's fall momentum, so
+  fast sand splashes into a pool and sinking grains churn the water around them.
 - **Static solid obstacles** that both sand and water collide with.
 - **Metaball rendering.** Water and sand are splatted into a half-resolution blob field and
   thresholded for a smooth liquid/granular surface. Water is shaded by depth (deeper = darker)
