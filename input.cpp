@@ -1,5 +1,13 @@
 #include "input.h"
+#include "wind.h"
 #include <cstring>
+#include <cmath>
+
+// Wind brush feel parameters.
+static const float WIND_SPEED   = 30.0f;  // cells/s of air the brush blows
+static const int   WIND_SPREAD  = 1;      // extra gust radius beyond the brush
+static const float WIND_AIM_MIN = 2.0f;   // px of mouse travel needed to re-aim
+static const float WIND_AIM_LERP = 0.35f; // how fast the jet swings to a new aim
 
 void input_init(InputState& state) {
     state.isDrawing   = false;
@@ -9,6 +17,21 @@ void input_init(InputState& state) {
     state.brushRadius = 1;
     state.prevMouseX  = 0;
     state.prevMouseY  = 0;
+    state.windDirX    = 1.0f;
+    state.windDirY    = 0.0f;
+}
+
+// Swing the wind jet toward the current stroke direction. Ignores the jitter of
+// a near-stationary mouse so the aim survives holding the brush in place.
+static void aim_wind(InputState& state, float dx, float dy) {
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < WIND_AIM_MIN) return;
+    float nx = state.windDirX + (dx / len - state.windDirX) * WIND_AIM_LERP;
+    float ny = state.windDirY + (dy / len - state.windDirY) * WIND_AIM_LERP;
+    float n = std::sqrt(nx * nx + ny * ny);
+    if (n < 1e-4f) return;  // aim reversed through zero; keep the old heading
+    state.windDirX = nx / n;
+    state.windDirY = ny / n;
 }
 
 // Stamp the current material over a disc of cells centered on the pixel
@@ -16,6 +39,10 @@ void input_init(InputState& state) {
 // fluid mode. A radius of 0 paints just the single cell under the cursor.
 static void paint_at(InputState& state, FluidState& fluid, int px, int py,
                      float dx, float dy) {
+    // Wind stamps no cells; its gust is applied per frame from input_update so
+    // that a held brush keeps blowing. (Erase still works in wind mode.)
+    if (state.mode == MODE_WIND && !state.eraseHeld) return;
+
     int ccx = px / CELL_SIZE;
     int ccy = py / CELL_SIZE;
     int r = state.brushRadius;
@@ -28,10 +55,14 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
             if (state.eraseHeld) {
                 grid[cy][cx] = EMPTY;
                 fluid_remove(fluid, cx, cy);
+                wind_erase(cx, cy);  // wind never fades on its own
             } else if (state.mode == MODE_SOLID) {
                 fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SOLID;
             } else if (state.mode == MODE_SAND) {
+                // A wall is not somewhere sand can go: brushing over one
+                // leaves it standing instead of dissolving it into grains.
+                if (grid[cy][cx] == SOLID) continue;
                 fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SAND;
             } else {
@@ -59,6 +90,7 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     } else if (event.type == SDL_MOUSEMOTION && state.isDrawing) {
         float dx = (float)(event.motion.x - state.prevMouseX);
         float dy = (float)(event.motion.y - state.prevMouseY);
+        if (state.mode == MODE_WIND) aim_wind(state, dx, dy);
         paint_at(state, fluid, event.motion.x, event.motion.y, dx, dy);
         state.prevMouseX = event.motion.x;
         state.prevMouseY = event.motion.y;
@@ -79,6 +111,9 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
             case SDLK_g:
                 state.showGrid = !state.showGrid;
                 break;
+            case SDLK_w:
+                wind_clear();  // still the air everywhere, leaving the scene
+                break;
             case SDLK_LEFTBRACKET:
                 if (state.brushRadius > BRUSH_MIN) state.brushRadius--;
                 break;
@@ -90,6 +125,7 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
                 break;
             case SDLK_c:
                 fluid_reset(fluid);
+                wind_clear();
                 memset(grid, 0, sizeof(int) * GRID_HEIGHT * GRID_WIDTH);
                 break;
         }
@@ -99,10 +135,19 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
 }
 
 void input_update(InputState& state, FluidState& fluid) {
-    if (!state.eraseHeld) return;
-    // Erase a disc at wherever the cursor currently is, every frame. The
-    // eraseHeld branch in paint_at does the actual removal.
+    if (!state.eraseHeld && !(state.isDrawing && state.mode == MODE_WIND)) return;
+
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    paint_at(state, fluid, mx, my, 0.0f, 0.0f);
+
+    if (state.eraseHeld) {
+        // Erase a disc wherever the cursor currently is, every frame. The
+        // eraseHeld branch in paint_at does the actual removal.
+        paint_at(state, fluid, mx, my, 0.0f, 0.0f);
+        return;
+    }
+
+    // Blow a gust along the aimed heading, every frame the button is held.
+    wind_gust(mx / CELL_SIZE, my / CELL_SIZE, state.brushRadius + WIND_SPREAD,
+              state.windDirX * WIND_SPEED, state.windDirY * WIND_SPEED);
 }
