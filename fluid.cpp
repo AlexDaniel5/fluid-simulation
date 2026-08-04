@@ -1,4 +1,5 @@
 #include "fluid.h"
+#include "wind.h"
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
@@ -21,6 +22,7 @@ const float DRIFT_MAX     = 2.0f;   // cap on density excess fed to drift, so a
                                     // instead of erupting upward
 const int   PUSH_ITER     = 2;
 const float PUSH_DIST     = 0.45f;  // min particle spacing (4/cell => 0.5)
+const float WIND_DRAG     = 5.0f;   // 1/s, how hard moving air grabs the surface
 
 inline int cidx(int i, int j) { return i + GRID_WIDTH * j; }
 inline int uidx(int i, int j) { return i + (GRID_WIDTH + 1) * j; }
@@ -217,6 +219,39 @@ void apply_gravity(FluidState& s, float dt) {
                 s.v[vidx(i, j)] += GRAVITY * dt;
 }
 
+// A fluid cell touching air feels the wind; one buried inside the liquid is
+// shielded by the water between it and the surface.
+inline bool exposed_fluid(const FluidState& s, int i, int j) {
+    if (cell_type(s, i, j) != CELL_FLUID) return false;
+    return cell_type(s, i - 1, j) == CELL_AIR || cell_type(s, i + 1, j) == CELL_AIR
+        || cell_type(s, i, j - 1) == CELL_AIR || cell_type(s, i, j + 1) == CELL_AIR;
+}
+
+// Wind drags the liquid wherever it is in contact with air: the faces of
+// surface cells and of airborne droplets relax toward the local air velocity.
+// It goes in as a body force before the projection, so a gust across a pool
+// becomes a surface wave the pressure solve resolves, not a rigid shove.
+void apply_wind(FluidState& s, float dt) {
+    if (!wind_active()) return;
+    float k = std::min(WIND_DRAG * dt, 1.0f);
+    for (int j = 0; j < GRID_HEIGHT; ++j)
+        for (int i = 0; i <= GRID_WIDTH; ++i) {
+            float w = 0.5f * (wind_u(i - 1, j) + wind_u(i, j));
+            // Still air exerts no drag: only gusted faces are touched, so a
+            // gust in one corner can't brake the free surface everywhere else.
+            if (std::fabs(w) < WIND_EPS) continue;
+            if (!exposed_fluid(s, i - 1, j) && !exposed_fluid(s, i, j)) continue;
+            s.u[uidx(i, j)] += k * (w - s.u[uidx(i, j)]);
+        }
+    for (int j = 0; j <= GRID_HEIGHT; ++j)
+        for (int i = 0; i < GRID_WIDTH; ++i) {
+            float w = 0.5f * (wind_v(i, j - 1) + wind_v(i, j));
+            if (std::fabs(w) < WIND_EPS) continue;
+            if (!exposed_fluid(s, i, j - 1) && !exposed_fluid(s, i, j)) continue;
+            s.v[vidx(i, j)] += k * (w - s.v[vidx(i, j)]);
+        }
+}
+
 // Zero the normal velocity on every face touching a solid cell (free-slip).
 void enforce_solid_faces(FluidState& s) {
     for (int j = 0; j < GRID_HEIGHT; ++j)
@@ -402,6 +437,7 @@ void fluid_step(FluidState& s, float dt) {
     memcpy(s.vOld, s.v, sizeof(s.v));
 
     apply_gravity(s, dt);
+    apply_wind(s, dt);
     enforce_solid_faces(s);
     solve_pressure(s);
     enforce_solid_faces(s);

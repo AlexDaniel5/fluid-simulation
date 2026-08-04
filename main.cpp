@@ -6,6 +6,7 @@
 #include "grid.h"
 #include "fluid.h"
 #include "sand.h"
+#include "wind.h"
 #include "renderer.h"
 #include "input.h"
 
@@ -17,6 +18,7 @@ static const char* mode_name(DrawMode m) {
         case MODE_SOLID: return "SOLID";
         case MODE_SAND:  return "SAND";
         case MODE_FLUID: return "FLUID";
+        case MODE_WIND:  return "WIND";
         default:         return "?";
     }
 }

@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "wind.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -278,6 +279,41 @@ static void draw_solids(SDL_Renderer* renderer) {
     }
 }
 
+// Moving air has nothing to draw of its own, so show it as faint streaks along
+// the flow — otherwise the wind brush is invisible and the water just twitches.
+// Sampled every other cell to keep the overlay readable.
+static const float WIND_VIS_REF = 30.0f;  // speed that draws a full-length streak
+
+static void draw_wind(SDL_Renderer* renderer) {
+    if (!wind_active()) return;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    for (int y = 0; y < GRID_HEIGHT; y += 2) {
+        for (int x = 0; x < GRID_WIDTH; x += 2) {
+            float wu = wind_u(x, y), wv = wind_v(x, y);
+            float speed = std::sqrt(wu * wu + wv * wv);
+            if (speed < 2.0f) continue;
+
+            float t = std::min(speed / WIND_VIS_REF, 1.0f);
+            float len = (0.6f + 1.4f * t) * CELL_SIZE;
+            float cx = (x + 0.5f) * CELL_SIZE;
+            float cy = (y + 0.5f) * CELL_SIZE;
+            // Center the streak on the cell so it reads as flow, not as a ray
+            // fired from the cell corner.
+            float hx = 0.5f * len * wu / speed;
+            float hy = 0.5f * len * wv / speed;
+
+            SDL_SetRenderDrawColor(renderer, 190, 215, 235, (Uint8)(30 + 110 * t));
+            SDL_RenderDrawLine(renderer, (int)(cx - hx), (int)(cy - hy),
+                               (int)(cx + hx), (int)(cy + hy));
+            // Brighter tip, so the streak reads directionally.
+            SDL_SetRenderDrawColor(renderer, 235, 245, 255, (Uint8)(60 + 150 * t));
+            SDL_RenderDrawPoint(renderer, (int)(cx + hx), (int)(cy + hy));
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+}
+
 static void draw_grid_lines(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
     for (int x = 0; x < WIDTH; x += CELL_SIZE)
@@ -291,6 +327,7 @@ void renderer_draw(SDL_Renderer* renderer, const FluidState& fluid, bool showGri
     draw_fluid(renderer, fluid);
     draw_sand(renderer);
     draw_solids(renderer);
+    draw_wind(renderer);
     if (showGrid)
         draw_grid_lines(renderer);
 }
