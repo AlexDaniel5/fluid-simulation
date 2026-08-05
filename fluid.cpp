@@ -7,13 +7,13 @@
 
 namespace {
 
-const float GRAVITY       = 25.0f;  // cells/s^2, uniform body force
+const float GRAVITY       = 25.0f * CELL_SCALE;  // cells/s^2, uniform body force
 const float FLIP_RATIO    = 0.9f;   // 1 = pure FLIP, 0 = pure PIC
 const int   PRESSURE_ITER = 150;
 const int   EXTRAP_LAYERS = 4;
 const int   SEED_PER_CELL = 4;
 const float PARTICLE_MASS = 0.3f;   // render-density contribution
-const float MAX_SPEED     = 80.0f;  // cells/s
+const float MAX_SPEED     = 80.0f * CELL_SCALE;  // cells/s
 const float REST_DENSITY  = (float)SEED_PER_CELL;  // mass per interior cell
 const float DRIFT_STIFF   = 3.0f;   // density-error feedback into pressure rhs
 const float DRIFT_MAX     = 2.0f;   // cap on density excess fed to drift, so a
@@ -191,12 +191,32 @@ void particles_to_grid(FluidState& s) {
 
 // Grow valid face values outward layer by layer (average of valid neighbors),
 // so particles just outside the liquid sample a sensible velocity.
+//
+// EXTRAP_LAYERS passes can only carry a value that far from an already-valid
+// face, so faces beyond that margin are untouched however large the domain is.
+// Scanning just the band keeps this proportional to the liquid rather than to
+// the grid, which matters once the canvas is much bigger than the water on it.
 void extrapolate(float* f, unsigned char* valid, int nx, int ny) {
+    int loX = nx, hiX = -1, loY = ny, hiY = -1;
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i)
+            if (valid[i + nx * j]) {
+                if (i < loX) loX = i;
+                if (i > hiX) hiX = i;
+                if (j < loY) loY = j;
+                if (j > hiY) hiY = j;
+            }
+    if (hiX < 0) return;  // nothing valid to grow outward from
+    loX = std::max(0, loX - EXTRAP_LAYERS);
+    hiX = std::min(nx - 1, hiX + EXTRAP_LAYERS);
+    loY = std::max(0, loY - EXTRAP_LAYERS);
+    hiY = std::min(ny - 1, hiY + EXTRAP_LAYERS);
+
     static std::vector<unsigned char> next;
     next.assign(valid, valid + nx * ny);
     for (int layer = 0; layer < EXTRAP_LAYERS; ++layer) {
-        for (int j = 0; j < ny; ++j) {
-            for (int i = 0; i < nx; ++i) {
+        for (int j = loY; j <= hiY; ++j) {
+            for (int i = loX; i <= hiX; ++i) {
                 int k = i + nx * j;
                 if (valid[k]) continue;
                 float sum = 0.0f;
@@ -208,7 +228,8 @@ void extrapolate(float* f, unsigned char* valid, int nx, int ny) {
                 if (n > 0) { f[k] = sum / n; next[k] = 1; }
             }
         }
-        memcpy(valid, next.data(), nx * ny);
+        // Only band rows can have changed, so only they need copying back.
+        memcpy(valid + loY * nx, next.data() + loY * nx, (hiY - loY + 1) * nx);
     }
 }
 
@@ -264,11 +285,28 @@ void enforce_solid_faces(FluidState& s) {
                 s.v[vidx(i, j)] = 0.0f;
 }
 
+// One cell's Gauss-Seidel row, built once per solve: the divisor (its count of
+// non-solid neighbors) and the fluid neighbors whose pressure it averages.
+struct PRow {
+    int c;
+    int diag;
+    int nn;      // fluid neighbors in nb
+    int nb[4];
+};
+
 // Incompressibility on fluid cells only. Air cells hold p = 0 (free surface);
 // solid neighbors drop out of the stencil (zero normal flux). dt/rho/h^2 are
 // folded into p, so the gradient subtraction below is a plain difference.
+//
+// The sweeps walk a list of the fluid cells rather than the whole domain, so
+// the solve costs what the water costs and an empty screen is free. Hoisting
+// the material tests into that list also lifts every bounds check out of the
+// inner loop. Same cells, same order, same arithmetic as sweeping the grid.
 void solve_pressure(FluidState& s) {
     memset(s.p, 0, sizeof(s.p));
+
+    static std::vector<PRow> rows;
+    rows.clear();
     for (int j = 0; j < GRID_HEIGHT; ++j) {
         for (int i = 0; i < GRID_WIDTH; ++i) {
             int c = cidx(i, j);
@@ -280,30 +318,32 @@ void solve_pressure(FluidState& s) {
             float density = s.dens[IX(i + 1, j + 1)] / PARTICLE_MASS;
             if (density > REST_DENSITY)
                 s.rhs[c] += DRIFT_STIFF * std::min(density - REST_DENSITY, DRIFT_MAX);
+
+            PRow r;
+            r.c = c;
+            r.diag = 0;
+            r.nn = 0;
+            int tl = cell_type(s, i - 1, j);
+            if (tl != CELL_SOLID) { ++r.diag; if (tl == CELL_FLUID) r.nb[r.nn++] = c - 1; }
+            int tr = cell_type(s, i + 1, j);
+            if (tr != CELL_SOLID) { ++r.diag; if (tr == CELL_FLUID) r.nb[r.nn++] = c + 1; }
+            int tu = cell_type(s, i, j - 1);
+            if (tu != CELL_SOLID) { ++r.diag; if (tu == CELL_FLUID) r.nb[r.nn++] = c - GRID_WIDTH; }
+            int td = cell_type(s, i, j + 1);
+            if (td != CELL_SOLID) { ++r.diag; if (td == CELL_FLUID) r.nb[r.nn++] = c + GRID_WIDTH; }
+            if (r.diag > 0) rows.push_back(r);
         }
     }
 
+    int n = (int)rows.size();
     for (int it = 0; it < PRESSURE_ITER; ++it) {
         // Alternate sweep direction so information propagates both ways.
         bool fwd = (it & 1) == 0;
-        for (int jj = 0; jj < GRID_HEIGHT; ++jj) {
-            int j = fwd ? jj : GRID_HEIGHT - 1 - jj;
-            for (int ii = 0; ii < GRID_WIDTH; ++ii) {
-                int i = fwd ? ii : GRID_WIDTH - 1 - ii;
-                int c = cidx(i, j);
-                if (s.cell[c] != CELL_FLUID) continue;
-                float sum = 0.0f;
-                int diag = 0;
-                int tl = cell_type(s, i - 1, j);
-                if (tl != CELL_SOLID) { ++diag; if (tl == CELL_FLUID) sum += s.p[c - 1]; }
-                int tr = cell_type(s, i + 1, j);
-                if (tr != CELL_SOLID) { ++diag; if (tr == CELL_FLUID) sum += s.p[c + 1]; }
-                int tu = cell_type(s, i, j - 1);
-                if (tu != CELL_SOLID) { ++diag; if (tu == CELL_FLUID) sum += s.p[c - GRID_WIDTH]; }
-                int td = cell_type(s, i, j + 1);
-                if (td != CELL_SOLID) { ++diag; if (td == CELL_FLUID) sum += s.p[c + GRID_WIDTH]; }
-                if (diag > 0) s.p[c] = (s.rhs[c] + sum) / diag;
-            }
+        for (int k = 0; k < n; ++k) {
+            const PRow& r = rows[fwd ? k : n - 1 - k];
+            float sum = 0.0f;
+            for (int q = 0; q < r.nn; ++q) sum += s.p[r.nb[q]];
+            s.p[r.c] = (s.rhs[r.c] + sum) / r.diag;
         }
     }
 
@@ -425,6 +465,17 @@ void fluid_add_velocity(FluidState& s, int x, int y, float vx, float vy) {
 }
 
 void fluid_step(FluidState& s, float dt) {
+    if (s.particles.empty()) {
+        // No liquid: there is nothing to project, but the material grid still
+        // has to be reclassified so a wall drawn this frame is visible to the
+        // other systems, and the velocity/density fields must read as empty.
+        classify_cells(s);
+        memset(s.u, 0, sizeof(s.u));
+        memset(s.v, 0, sizeof(s.v));
+        memset(s.dens, 0, sizeof(s.dens));
+        return;
+    }
+
     advect_particles(s, dt);
     push_particles_apart(s);
     classify_cells(s);

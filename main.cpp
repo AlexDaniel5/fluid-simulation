@@ -51,7 +51,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    FluidState fluid;
+    // Static, not a local: at a 5-pixel cell the MAC grid and particle arrays
+    // are a few megabytes, which overflows the default stack on some platforms.
+    static FluidState fluid;
     fluid_init(fluid);
 
     InputState input;

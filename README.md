@@ -26,6 +26,19 @@ interact with each other under gravity.
   thresholded for a smooth liquid/granular surface. Water is shaded by depth (deeper = darker)
   and speed (fast = foamy), and sand darkens when wet, drying out slowly over time.
 
+## Simulation size
+
+The window is 1600×1000 with a 5-pixel cell, giving a 320×200 grid. `CELL_SIZE` in `grid.h` is
+the zoom control: the physics and shading constants are authored in cell units against a
+10-pixel reference cell and scaled by `CELL_SCALE`, so shrinking the cell pulls the camera back
+— more world in the same window — without changing how fast anything falls, flows, or shades.
+Halving `CELL_SIZE` quadruples the cell count, and the solver cost scales with it, so this is
+also the dial to turn if the framerate is too low.
+
+Cost tracks how much water is on screen rather than how big the grid is: the pressure solve
+sweeps a list of the fluid cells, velocity extrapolation only scans the band it can reach, and
+a screen with no liquid skips the velocity pipeline entirely.
+
 ## Building
 
 Requires `g++`, `make`, `pkg-config`, and the SDL2 development libraries.

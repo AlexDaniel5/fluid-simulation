@@ -4,8 +4,8 @@
 #include <cmath>
 
 // Wind brush feel parameters.
-static const float WIND_SPEED   = 30.0f;  // cells/s of air the brush blows
-static const int   WIND_SPREAD  = 1;      // extra gust radius beyond the brush
+static const float WIND_SPEED   = 30.0f * CELL_SCALE;      // air the brush blows
+static const int   WIND_SPREAD  = (int)(1 * CELL_SCALE);   // gust radius past the brush
 static const float WIND_AIM_MIN = 2.0f;   // px of mouse travel needed to re-aim
 static const float WIND_AIM_LERP = 0.35f; // how fast the jet swings to a new aim
 
@@ -14,7 +14,7 @@ void input_init(InputState& state) {
     state.showGrid    = false;
     state.eraseHeld   = false;
     state.mode        = MODE_SOLID;
-    state.brushRadius = 1;
+    state.brushRadius = BRUSH_DEFAULT;
     state.prevMouseX  = 0;
     state.prevMouseY  = 0;
     state.windDirX    = 1.0f;

@@ -156,10 +156,13 @@ static void draw_fluid(SDL_Renderer* renderer, const FluidState& fluid) {
             }
             wetRun++;
 
+            // Depth and speed are in cell units, so both thresholds carry
+            // CELL_SCALE — water shades by how deep it looks, not how many
+            // cells happen to fit in that depth.
             float depth = wetRun / PSCALE;                       // in cells
-            float deep = std::min(depth / 15.0f, 1.0f);          // darken
+            float deep = std::min(depth / (15.0f * CELL_SCALE), 1.0f);
             float speed = speedF[y * RW + x] / b;
-            float foam = smoothstep(8.0f, 30.0f, speed) * 0.8f;  // lighten
+            float foam = smoothstep(8.0f * CELL_SCALE, 30.0f * CELL_SCALE, speed) * 0.8f;
 
             Uint8 r = lerp8(lerp8(40, 8, deep),   210, foam);
             Uint8 g = lerp8(lerp8(110, 30, deep), 230, foam);
@@ -245,7 +248,7 @@ static void draw_sand(SDL_Renderer* renderer) {
             run++;
 
             float depth = run / PSCALE;                      // in cells
-            float deep = std::min(depth / 6.0f, 1.0f);       // buried = darker
+            float deep = std::min(depth / (6.0f * CELL_SCALE), 1.0f);  // buried = darker
             float wet = wetF[y * RW + x] * 0.85f;
             // ~4x4 screen-pixel grain clumps, +/-8% brightness, time-stable
             float grain = 0.92f + 0.16f * hash01(x >> 1, y >> 1);
@@ -282,20 +285,23 @@ static void draw_solids(SDL_Renderer* renderer) {
 // Moving air has nothing to draw of its own, so show it as faint streaks along
 // the flow — otherwise the wind brush is invisible and the water just twitches.
 // Sampled every other cell to keep the overlay readable.
-static const float WIND_VIS_REF = 30.0f;  // speed that draws a full-length streak
+static const float WIND_VIS_REF = 30.0f * CELL_SCALE;  // speed drawn full-length
+static const int   WIND_VIS_STEP = (int)(2 * CELL_SCALE);  // cells between streaks
 
 static void draw_wind(SDL_Renderer* renderer) {
     if (!wind_active()) return;
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    for (int y = 0; y < GRID_HEIGHT; y += 2) {
-        for (int x = 0; x < GRID_WIDTH; x += 2) {
+    for (int y = 0; y < GRID_HEIGHT; y += WIND_VIS_STEP) {
+        for (int x = 0; x < GRID_WIDTH; x += WIND_VIS_STEP) {
             float wu = wind_u(x, y), wv = wind_v(x, y);
             float speed = std::sqrt(wu * wu + wv * wv);
-            if (speed < 2.0f) continue;
+            if (speed < 2.0f * CELL_SCALE) continue;
 
             float t = std::min(speed / WIND_VIS_REF, 1.0f);
-            float len = (0.6f + 1.4f * t) * CELL_SIZE;
+            // Streak length in pixels, so the overlay keeps its density and
+            // scale on screen rather than shrinking with the cell.
+            float len = (0.6f + 1.4f * t) * CELL_SIZE * CELL_SCALE;
             float cx = (x + 0.5f) * CELL_SIZE;
             float cy = (y + 0.5f) * CELL_SIZE;
             // Center the streak on the cell so it reads as flow, not as a ray
