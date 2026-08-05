@@ -1,5 +1,6 @@
 #include "input.h"
 #include "wind.h"
+#include "renderer.h"  // window -> simulation pixel mapping
 #include <cstring>
 #include <cmath>
 
@@ -80,20 +81,28 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     if (event.type == SDL_QUIT) return false;
 
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-        state.isDrawing  = true;
-        state.prevMouseX = event.button.x;
-        state.prevMouseY = event.button.y;
-        // Paint on press so a single click (no drag) still draws.
-        paint_at(state, fluid, event.button.x, event.button.y, 0.0f, 0.0f);
+        int mx, my;
+        if (renderer_window_to_sim(event.button.x, event.button.y, &mx, &my)) {
+            state.isDrawing  = true;
+            state.prevMouseX = mx;
+            state.prevMouseY = my;
+            // Paint on press so a single click (no drag) still draws.
+            paint_at(state, fluid, mx, my, 0.0f, 0.0f);
+        }
     } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
         state.isDrawing = false;
     } else if (event.type == SDL_MOUSEMOTION && state.isDrawing) {
-        float dx = (float)(event.motion.x - state.prevMouseX);
-        float dy = (float)(event.motion.y - state.prevMouseY);
-        if (state.mode == MODE_WIND) aim_wind(state, dx, dy);
-        paint_at(state, fluid, event.motion.x, event.motion.y, dx, dy);
-        state.prevMouseX = event.motion.x;
-        state.prevMouseY = event.motion.y;
+        int mx, my;
+        if (renderer_window_to_sim(event.motion.x, event.motion.y, &mx, &my)) {
+            // Deltas are taken in simulation pixels too, so a fling imparts the
+            // same impulse whatever the window is scaled to.
+            float dx = (float)(mx - state.prevMouseX);
+            float dy = (float)(my - state.prevMouseY);
+            if (state.mode == MODE_WIND) aim_wind(state, dx, dy);
+            paint_at(state, fluid, mx, my, dx, dy);
+            state.prevMouseX = mx;
+            state.prevMouseY = my;
+        }
     }
 
     if (event.type == SDL_KEYUP && event.key.keysym.sym == SDLK_e) {
@@ -137,8 +146,9 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
 void input_update(InputState& state, FluidState& fluid) {
     if (!state.eraseHeld && !(state.isDrawing && state.mode == MODE_WIND)) return;
 
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
+    int wx, wy, mx, my;
+    SDL_GetMouseState(&wx, &wy);
+    if (!renderer_window_to_sim(wx, wy, &mx, &my)) return;  // cursor off the sim
 
     if (state.eraseHeld) {
         // Erase a disc wherever the cursor currently is, every frame. The

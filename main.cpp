@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
         "FluidSimulation [SOLID]",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         WIDTH, HEIGHT,
-        SDL_WINDOW_ALLOW_HIGHDPI
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
         std::cout << "Could not create window: " << SDL_GetError() << std::endl;

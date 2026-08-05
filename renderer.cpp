@@ -20,6 +20,7 @@ static const float SAND_BLOB_R = 1.25f * PSCALE;
 static const float WET_RISE = 0.5f;    // approach rate toward 1 under water
 static const float DRY_RATE = 0.008f;  // decay rate in air (~2 s to dry out)
 
+static SDL_Renderer* viewRenderer = nullptr;  // kept for the window->sim mapping
 static SDL_Texture* fluidTex = nullptr;
 static SDL_Texture* sandTex = nullptr;
 static std::vector<float> blobF;   // water blob coverage
@@ -29,6 +30,12 @@ static std::vector<float> wetF;    // persistent per-pixel sand wetness
 
 void renderer_init(SDL_Renderer* renderer) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");  // smooth upscale
+    viewRenderer = renderer;
+    // Draw in fixed simulation pixels and let SDL scale them to the window, so
+    // resizing or going fullscreen zooms the whole sim instead of leaving the
+    // extra window area untouched. The aspect ratio is preserved, so a window
+    // shaped differently than the sim gets letterbox bars rather than a stretch.
+    SDL_RenderSetLogicalSize(renderer, WIDTH, HEIGHT);
     fluidTex = SDL_CreateTexture(
         renderer,
         SDL_PIXELFORMAT_ARGB8888,
@@ -338,7 +345,18 @@ void renderer_draw(SDL_Renderer* renderer, const FluidState& fluid, bool showGri
         draw_grid_lines(renderer);
 }
 
+bool renderer_window_to_sim(int wx, int wy, int* sx, int* sy) {
+    float fx = (float)wx, fy = (float)wy;
+    if (viewRenderer) SDL_RenderWindowToLogical(viewRenderer, wx, wy, &fx, &fy);
+    // Floor rather than truncate: inside a letterbox bar the coordinate is
+    // negative, and truncation would fold it onto the first row or column.
+    *sx = (int)std::floor(fx);
+    *sy = (int)std::floor(fy);
+    return *sx >= 0 && *sx < WIDTH && *sy >= 0 && *sy < HEIGHT;
+}
+
 void renderer_destroy() {
+    viewRenderer = nullptr;
     if (fluidTex) {
         SDL_DestroyTexture(fluidTex);
         fluidTex = nullptr;

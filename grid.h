@@ -1,6 +1,8 @@
 #pragma once
 
-const int WIDTH = 1600, HEIGHT = 1000;
+// 16:9, so scaling up to a fullscreen 16:9 display leaves no letterbox bars —
+// every pixel of the screen is simulation.
+const int WIDTH = 1600, HEIGHT = 900;
 const int CELL_SIZE = 5;
 const int GRID_WIDTH = WIDTH / CELL_SIZE;
 const int GRID_HEIGHT = HEIGHT / CELL_SIZE;
