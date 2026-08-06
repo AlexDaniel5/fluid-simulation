@@ -7,6 +7,7 @@
 #include "fluid.h"
 #include "sand.h"
 #include "wind.h"
+#include "lava.h"
 #include "renderer.h"
 #include "input.h"
 
@@ -19,6 +20,7 @@ static const char* mode_name(DrawMode m) {
         case MODE_SAND:  return "SAND";
         case MODE_FLUID: return "FLUID";
         case MODE_WIND:  return "WIND";
+        case MODE_LAVA:  return "LAVA";
         default:         return "?";
     }
 }
@@ -92,6 +94,10 @@ int main(int argc, char* argv[]) {
         }
 
         frameCount++;
+        // Lava first: it resolves melts and freezes before sand decides what it
+        // can fall into, so a grain never lands in a cell that is about to
+        // become rock underneath it.
+        lava_update(fluid, frameCount, 0.1f);
         sand_update(fluid, frameCount, 0.1f);
         fluid_step(fluid, 0.1f);
 

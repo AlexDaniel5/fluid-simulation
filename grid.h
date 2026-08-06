@@ -20,6 +20,9 @@ const int TOTAL = PADDED_W * PADDED_H;
 
 #define IX(x, y) ((x) + PADDED_W * (y))
 
-enum CellType { EMPTY = 0, SOLID = 1, SAND = 2 };
+// LAVA is molten and moves; ROCK is what it freezes into. ROCK behaves exactly
+// like SOLID everywhere in the physics — it exists so that land you poured is
+// visually distinguishable from a wall you drew.
+enum CellType { EMPTY = 0, SOLID = 1, SAND = 2, LAVA = 3, ROCK = 4 };
 
 extern int grid[GRID_HEIGHT][GRID_WIDTH];

@@ -1,5 +1,6 @@
 #include "input.h"
 #include "wind.h"
+#include "lava.h"
 #include "renderer.h"  // window -> simulation pixel mapping
 #include <cstring>
 #include <cmath>
@@ -57,15 +58,23 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
                 grid[cy][cx] = EMPTY;
                 fluid_remove(fluid, cx, cy);
                 wind_erase(cx, cy);  // wind never fades on its own
+                lava_erase(cx, cy);  // drop the heat behind the cleared cell
             } else if (state.mode == MODE_SOLID) {
                 fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SOLID;
             } else if (state.mode == MODE_SAND) {
                 // A wall is not somewhere sand can go: brushing over one
                 // leaves it standing instead of dissolving it into grains.
-                if (grid[cy][cx] == SOLID) continue;
+                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK) continue;
                 fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SAND;
+            } else if (state.mode == MODE_LAVA) {
+                // Same rule as sand: pour around walls and set rock, not over
+                // them. Sand underneath is left alone — the flow melts its way
+                // in from lava_update instead, and pays heat for the privilege.
+                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK) continue;
+                fluid_displace(fluid, cx, cy);
+                lava_add(cx, cy);
             } else {
                 fluid_add_density(fluid, cx, cy, 0.5f);
                 // Particle velocities are in cells/second; turn the per-event
@@ -135,6 +144,7 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
             case SDLK_c:
                 fluid_reset(fluid);
                 wind_clear();
+                lava_clear();
                 memset(grid, 0, sizeof(int) * GRID_HEIGHT * GRID_WIDTH);
                 break;
         }
