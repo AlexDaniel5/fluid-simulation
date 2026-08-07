@@ -1,4 +1,4 @@
-# FluidSimulation
+# fluid-simulation
 
 A real-time 2D fluid, sand, lava, and solid sandbox built in C++ with [SDL2](https://www.libsdl.org/).
 Draw obstacles, pour sand, fling water, and lay down molten rock on an interactive grid — the
@@ -75,7 +75,7 @@ Then build:
 make
 ```
 
-The binary is produced at `build/fluidSimulation`.
+The binary is produced at `build/fluid-simulation`.
 
 > The `src/include` headers and `build/SDL2.dll` in the repo are a bundled SDL2 copy for
 > Windows builds. The `Makefile` itself uses `pkg-config` to locate a system-installed SDL2.
@@ -83,7 +83,7 @@ The binary is produced at `build/fluidSimulation`.
 ## Running
 
 ```sh
-./build/fluidSimulation
+./build/fluid-simulation
 ```
 
 ## Controls
