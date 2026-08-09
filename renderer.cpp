@@ -633,7 +633,11 @@ bool renderer_window_to_sim(int wx, int wy, int* sx, int* sy) {
     // negative, and truncation would fold it onto the first row or column.
     *sx = (int)std::floor(fx);
     *sy = (int)std::floor(fy);
-    return *sx >= 0 && *sx < WIDTH && *sy >= 0 && *sy < HEIGHT;
+    return renderer_sim_contains(*sx, *sy);
+}
+
+bool renderer_sim_contains(int sx, int sy) {
+    return sx >= 0 && sx < WIDTH && sy >= 0 && sy < HEIGHT;
 }
 
 void renderer_destroy() {

@@ -55,11 +55,20 @@ the zoom control: the physics and shading constants are authored in cell units a
 Halving `CELL_SIZE` quadruples the cell count, and the solver cost scales with it, so this is
 also the dial to turn if the framerate is too low.
 
+1600×900 is the size the sim is *drawn* at, not a size every desktop can show — with a window
+frame around it, it doesn't fit a 1536×864 display, and a window bigger than the screen has its
+title bar pushed off the top edge where the close and maximise buttons can't be reached. So at
+startup the window is shrunk to fit the display's usable area (16:9 preserved) and placed inside
+it. On a large display nothing changes; on a small one you get a smaller window showing the same
+world, since the render scales to the window either way.
+
 Cost tracks how much water is on screen rather than how big the grid is: the pressure solve
 sweeps a list of the fluid cells, velocity extrapolation only scans the band it can reach, and
 a screen with no liquid skips the velocity pipeline entirely.
 
 ## Building
+
+### Linux
 
 Requires `g++`, `make`, `pkg-config`, and the SDL2 development libraries.
 
@@ -77,14 +86,32 @@ make
 
 The binary is produced at `build/fluid-simulation`.
 
-> The `src/include` headers and `build/SDL2.dll` in the repo are a bundled SDL2 copy for
-> Windows builds. The `Makefile` itself uses `pkg-config` to locate a system-installed SDL2.
+### Windows
+
+`make windows` cross-compiles a Windows executable with MinGW-w64 (this works from WSL too):
+
+```sh
+sudo apt install mingw-w64
+make windows
+```
+
+The executable is produced at `build/fluid-simulation.exe`. It is a GUI-subsystem binary, so
+launching it opens the window with no console behind it, and everything except SDL2 is linked
+statically — `SDL2.dll` is its only runtime dependency.
+
+> The `src/include` headers and `build/SDL2.dll` in the repo are a bundled SDL2 copy; the
+> `windows` target compiles against those headers and links directly against that DLL. The
+> default Linux target instead uses `pkg-config` to locate a system-installed SDL2.
 
 ## Running
 
 ```sh
 ./build/fluid-simulation
 ```
+
+On Windows, double-click `build\fluid-simulation.exe` in Explorer. It loads `SDL2.dll` from its
+own folder, so the two files have to travel together — copy or move the whole folder rather than
+the `.exe` on its own.
 
 ## Controls
 

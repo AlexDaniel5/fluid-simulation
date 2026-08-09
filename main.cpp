@@ -1,4 +1,3 @@
-#include <iostream>
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -14,6 +13,54 @@
 // Single definition of the shared grid
 int grid[GRID_HEIGHT][GRID_WIDTH] = {0};
 
+// Fatal-startup reporting. The Windows build is linked as a GUI binary so that
+// double-clicking it doesn't open a console, which means a printed message would
+// go nowhere and a failed startup would look like the exe doing nothing.
+static void fatal(const char* what) {
+    char msg[256];
+    std::snprintf(msg, sizeof(msg), "%s: %s", what, SDL_GetError());
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FluidSimulation", msg, nullptr);
+}
+
+// WIDTH x HEIGHT is the size the sim is *drawn* at, not a size every display can
+// show: on a 1536x864 desktop the 1600x900 client plus its frame is larger than
+// the screen in both directions, so the window gets centred on nothing and its
+// title bar — with the minimise/maximise/close buttons — ends up above the top
+// edge, out of reach. Shrink the window until the whole frame fits inside the
+// display's usable area (which already excludes the taskbar) and put it there.
+// The 16:9 ratio is preserved so the render still fills the window edge to edge,
+// and the sim itself is unaffected: SDL_RenderSetLogicalSize scales it to
+// whatever the window ends up being.
+static void fit_window_to_display(SDL_Window* window) {
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(window), &usable) != 0)
+        return;
+
+    // Frame thickness isn't known until the window exists, and isn't reported on
+    // every platform; the fallback is a typical desktop-window border.
+    int top = 32, left = 8, bottom = 8, right = 8;
+    SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right);
+
+    const int maxW = usable.w - left - right;
+    const int maxH = usable.h - top - bottom;
+    if (maxW <= 0 || maxH <= 0)
+        return;
+
+    int w = WIDTH, h = HEIGHT;
+    if (w > maxW || h > maxH) {
+        const float scale = SDL_min((float)maxW / WIDTH, (float)maxH / HEIGHT);
+        w = (int)(WIDTH * scale);
+        h = (int)(HEIGHT * scale);
+        SDL_SetWindowSize(window, w, h);
+    }
+
+    // Position is the client area's top-left, so the frame's own top-left is
+    // (x - left, y - top): offsetting by the border keeps the title bar on screen.
+    SDL_SetWindowPosition(window,
+                          usable.x + left + (maxW - w) / 2,
+                          usable.y + top + (maxH - h) / 2);
+}
+
 static const char* mode_name(DrawMode m) {
     switch (m) {
         case MODE_SOLID: return "SOLID";
@@ -26,10 +73,16 @@ static const char* mode_name(DrawMode m) {
 }
 
 int main(int argc, char* argv[]) {
+    // The Windows build defines SDL_MAIN_HANDLED so that this stays the real
+    // entry point instead of being renamed to SDL_main; SDL then needs to be
+    // told the platform setup it would have done itself is accounted for.
+    // A no-op everywhere else.
+    SDL_SetMainReady();
+
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
     if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
-        std::cout << "Could not initialize SDL: " << SDL_GetError() << std::endl;
+        fatal("Could not initialize SDL");
         return -1;
     }
 
@@ -40,14 +93,16 @@ int main(int argc, char* argv[]) {
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
-        std::cout << "Could not create window: " << SDL_GetError() << std::endl;
+        fatal("Could not create window");
         SDL_Quit();
         return -1;
     }
 
+    fit_window_to_display(window);
+
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
-        std::cout << "Could not create renderer: " << SDL_GetError() << std::endl;
+        fatal("Could not create renderer");
         SDL_DestroyWindow(window);
         SDL_Quit();
         return -1;

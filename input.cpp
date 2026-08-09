@@ -90,8 +90,10 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     if (event.type == SDL_QUIT) return false;
 
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-        int mx, my;
-        if (renderer_window_to_sim(event.button.x, event.button.y, &mx, &my)) {
+        // Event coordinates are already simulation pixels — SDL scales them out
+        // of window space itself, so they only need the bounds check.
+        const int mx = event.button.x, my = event.button.y;
+        if (renderer_sim_contains(mx, my)) {
             state.isDrawing  = true;
             state.prevMouseX = mx;
             state.prevMouseY = my;
@@ -101,8 +103,8 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
         state.isDrawing = false;
     } else if (event.type == SDL_MOUSEMOTION && state.isDrawing) {
-        int mx, my;
-        if (renderer_window_to_sim(event.motion.x, event.motion.y, &mx, &my)) {
+        const int mx = event.motion.x, my = event.motion.y;
+        if (renderer_sim_contains(mx, my)) {
             // Deltas are taken in simulation pixels too, so a fling imparts the
             // same impulse whatever the window is scaled to.
             float dx = (float)(mx - state.prevMouseX);
