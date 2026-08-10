@@ -28,13 +28,14 @@ inline int cidx(int i, int j) { return i + GRID_WIDTH * j; }
 inline int uidx(int i, int j) { return i + (GRID_WIDTH + 1) * j; }
 inline int vidx(int i, int j) { return i + GRID_WIDTH * j; }
 
-// Out-of-domain counts as solid; SAND, LAVA and ROCK all block liquid like a
-// wall. Lava is dense enough that water sits on it rather than seeping through,
-// and it quenches on contact anyway.
+// Out-of-domain counts as solid; SAND, LAVA, ROCK and ICE all block liquid like
+// a wall. Lava is dense enough that water sits on it rather than seeping through,
+// and it quenches on contact anyway; ice is a rigid solid that floats on the
+// water rather than mixing with it.
 inline bool solid_cell(int i, int j) {
     if (i < 0 || i >= GRID_WIDTH || j < 0 || j >= GRID_HEIGHT) return true;
     int c = grid[j][i];
-    return c == SOLID || c == SAND || c == LAVA || c == ROCK;
+    return c == SOLID || c == SAND || c == LAVA || c == ROCK || c == ICE;
 }
 
 inline int cell_type(const FluidState& s, int i, int j) {

@@ -17,11 +17,12 @@ inline bool in_grid(int x, int y) {
     return x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT;
 }
 
-// Blocked cells: air flows around solids, packed sand, and lava (molten or set),
-// not through. So a lava flow casts a wind shadow of its own once it builds up.
+// Blocked cells: air flows around solids, packed sand, ice, and lava (molten or
+// set), not through. So a lava flow — or a stack of ice — casts a wind shadow of
+// its own once it builds up.
 inline bool blocks_wind(int x, int y) {
     int c = grid[y][x];
-    return c == SOLID || c == SAND || c == LAVA || c == ROCK;
+    return c == SOLID || c == SAND || c == LAVA || c == ROCK || c == ICE;
 }
 
 // Walk the segment from the gust center to (x, y) in half-cell steps. Anything

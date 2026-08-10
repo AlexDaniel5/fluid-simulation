@@ -1,8 +1,8 @@
 # fluid-simulation
 
-A real-time 2D fluid, sand, lava, and solid sandbox built in C++ with [SDL2](https://www.libsdl.org/).
-Draw obstacles, pour sand, fling water, and lay down molten rock on an interactive grid — the
-materials interact with each other under gravity.
+A real-time 2D fluid, sand, lava, ice, and solid sandbox built in C++ with
+[SDL2](https://www.libsdl.org/). Draw obstacles, pour sand, fling water, drop ice, and lay down
+molten rock on an interactive grid — the materials interact with each other under gravity.
 
 ## Quick start
 
@@ -12,9 +12,10 @@ make
 ./build/fluid-simulation
 ```
 
-Then: **Space** cycles the material (`SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA`), **left-drag**
-draws it, **hold E** erases, **`[`** / **`]`** resize the brush, and **C** clears the screen. Try
-drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to build an island.
+Then: **Space** cycles the material (`SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA` → `ICE`),
+**left-drag** draws it, **hold E** erases, **`[`** / **`]`** resize the brush, and **C** clears the
+screen. Try drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to build an
+island — or float a raft of `ICE` on the water and drop lava on it to melt it back out.
 
 ## Features
 
@@ -37,6 +38,13 @@ drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to bu
   own heat, so a flow carves a channel into a dune and then sets rather than chain-reacting
   through the whole thing. Set lava becomes rock, which is dark basalt rather than the white of
   a drawn wall, so land you poured is distinguishable from geometry you built.
+- **Ice.** The one *rigid* material that moves. It falls under gravity like sand, but a supported
+  block simply stops — no diagonal slide, no slumping, no rolling downwind — so ice stacks into
+  vertical columns and holds whatever shape it lands in, where sand can only make a 45° pile. It
+  also floats: water counts as support, so a block dropped into a pool comes to rest on the
+  surface and starts falling again by itself once the water is drained or displaced. Lava melts it
+  straight back into water and is quenched hard doing so, so a flow poured onto an ice sheet
+  floods a pocket and then sets into rock instead of eating through.
 - **Wind.** A brush-painted air-velocity field that *stands* — a gust keeps blowing until you
   erase or clear it, so you can lay down a permanent current and then build in it. Neither
   solver models air, so wind is applied as a drag force on surfaces that are exposed to it:
@@ -45,7 +53,7 @@ drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to bu
   becomes a wave rather than a rigid shove. Dry surface grains roll and saltate downwind, a
   strong updraft plucks them off the pile, and wet sand clings. Moving air also carries heat off
   exposed lava far faster than still air does, so a gust freezes a flow where it stands. Solids,
-  sand, lava and rock all block a gust, so a wall casts a wind shadow.
+  sand, ice, lava and rock all block a gust, so a wall casts a wind shadow.
 - **Metaball rendering.** Water, sand and lava are splatted into a half-resolution blob field and
   thresholded for a smooth liquid/granular surface. Water is shaded by depth (deeper = darker)
   and speed (fast = foamy), and sand darkens when wet, drying out slowly over time. Lava is
@@ -53,7 +61,9 @@ drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to bu
   material that *emits*: a blurred copy of it is added back over the scene, so a flow lights the
   ground and the air around it. That halo is built at an eighth of the window and only over the
   flow's own bounding box, which keeps the two extra passes proportional to how much lava is on
-  screen rather than to the size of the grid.
+  screen rather than to the size of the grid. Ice deliberately opts out: it is drawn as crisp
+  per-cell facets in pale cyan, because the blockiness is what makes it read as crystal next to
+  the rounded silhouettes around it.
 
 ## Simulation size
 
@@ -130,10 +140,11 @@ the `.exe` on its own.
 | Input | Action |
 |-------|--------|
 | **Left-click (or drag)** | Draw the currently selected material (or fling water in fluid mode) |
-| **Space** | Cycle draw mode: `SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA` |
-| **Draw in `LAVA` mode** | Pour molten rock. It only stamps into open space — walls and set rock stand, and sand has to be melted through — so the brush can't dissolve terrain for free. Pour it into water to build an island, across a dune to carve a channel, or leave it alone and watch it crust over and set |
+| **Space** | Cycle draw mode: `SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA` → `ICE` |
+| **Draw in `LAVA` mode** | Pour molten rock. It only stamps into open space — walls and set rock stand, and sand and ice have to be melted through — so the brush can't dissolve terrain for free. Pour it into water to build an island, across a dune to carve a channel, or leave it alone and watch it crust over and set |
+| **Draw in `ICE` mode** | Drop solid blocks. They fall straight down and stop the moment something supports them, so ice stacks vertically instead of sliding into a pile, and it rides on water rather than sinking. Like lava, it only stamps into open space |
 | **Drag in `WIND` mode** | Blow air along the stroke. The jet keeps its heading, so holding still leaves a steady stream; stroke a new direction to re-aim it. The brush radius sets the gust width, and faint streaks show where the air is moving. Painted wind stays put until erased |
-| **Hold E** | Erase: while held, cells under the cursor are continuously rubbed out (solids, sand, lava, rock, any water that flows in, and any wind blowing there) — no clicking needed |
+| **Hold E** | Erase: while held, cells under the cursor are continuously rubbed out (solids, sand, ice, lava, rock, any water that flows in, and any wind blowing there) — no clicking needed |
 | **W** | Still the air everywhere, leaving the scene itself alone |
 | **`[`** | Shrink the brush radius |
 | **`]`** | Grow the brush radius |
@@ -153,6 +164,7 @@ The current draw mode is shown in the window title bar.
 | `sand.h` / `sand.cpp` | Cellular-automaton sand, coupled to the liquid |
 | `wind.h` / `wind.cpp` | Decaying air-velocity field read by both solvers |
 | `lava.h` / `lava.cpp` | Viscous cellular-automaton lava: heat, cooling, quenching and melting |
+| `ice.h` / `ice.cpp` | Rigid falling ice: gravity, stacking, and floating on water |
 | `input.h` / `input.cpp` | Mouse/keyboard handling and draw modes |
 | `renderer.h` / `renderer.cpp` | Metaball splatting and shading |
 | `fluidSimulation.cpp` | Earlier single-file prototype (not part of the `make` build) |

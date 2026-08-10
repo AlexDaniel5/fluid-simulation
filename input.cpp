@@ -1,6 +1,7 @@
 #include "input.h"
 #include "wind.h"
 #include "lava.h"
+#include "ice.h"
 #include "renderer.h"  // window -> simulation pixel mapping
 #include <cstring>
 #include <cmath>
@@ -65,16 +66,25 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
             } else if (state.mode == MODE_SAND) {
                 // A wall is not somewhere sand can go: brushing over one
                 // leaves it standing instead of dissolving it into grains.
-                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK) continue;
+                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK ||
+                    grid[cy][cx] == ICE) continue;
                 fluid_displace(fluid, cx, cy);
                 grid[cy][cx] = SAND;
             } else if (state.mode == MODE_LAVA) {
                 // Same rule as sand: pour around walls and set rock, not over
-                // them. Sand underneath is left alone — the flow melts its way
-                // in from lava_update instead, and pays heat for the privilege.
-                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK) continue;
+                // them. Sand and ice underneath are left alone — the flow melts
+                // its way in from lava_update instead, and pays heat for the
+                // privilege.
+                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK ||
+                    grid[cy][cx] == ICE) continue;
                 fluid_displace(fluid, cx, cy);
                 lava_add(cx, cy);
+            } else if (state.mode == MODE_ICE) {
+                // Same rule again. ice_add refuses anything but open space, so
+                // the guard here only spares the walls the cheap check.
+                if (grid[cy][cx] == SOLID || grid[cy][cx] == ROCK) continue;
+                fluid_displace(fluid, cx, cy);
+                ice_add(cx, cy);
             } else {
                 fluid_add_density(fluid, cx, cy, 0.5f);
                 // Particle velocities are in cells/second; turn the per-event

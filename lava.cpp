@@ -37,6 +37,11 @@ static const float MELT_PROB     = 0.08f;   // per-frame chance per touched grai
 static const float MELT_COST     = 0.25f;   // heat spent melting one grain — this is
                                             // what keeps melting self-limiting
 static const float MELT_INHERIT  = 0.5f;    // heat the new melt starts with
+static const float ICE_MELT_PROB = 0.2f;    // per-frame chance per touched block. Higher
+                                            // than sand's: ice goes first and pays the
+                                            // same MELT_COST, but an ice face also
+                                            // quenches, so a flow poured onto a sheet
+                                            // usually only opens a pocket before it sets
 
 // Per-cell state, parallel to grid[][]. Carried along when a cell moves and
 // zeroed at the source, the same way sand carries its fall state.
@@ -143,10 +148,14 @@ void lava_update(FluidState& f, int frame, float dt) {
             float gust = 0.0f;      // strongest air speed on an open face
             int wx = -1, wy = -1;   // a water neighbour to boil, if any
             int sx = -1, sy = -1;   // a sand neighbour to melt, if any
+            int ix = -1, iy = -1;   // an ice neighbour to melt, if any
             for (int k = 0; k < 4; ++k) {
                 int ax = x + NEIGH[k][0], ay = y + NEIGH[k][1];
                 if (!in_grid(ax, ay)) continue;
                 if (has_water(f, ax, ay))      { quench += QUENCH_RATE; wx = ax; wy = ay; }
+                // Ice chills a face as hard as water does, so a flow crusts
+                // against a sheet even before it has melted its way in.
+                else if (grid[ay][ax] == ICE)   { quench += QUENCH_RATE; ix = ax; iy = ay; }
                 else if (grid[ay][ax] == SAND)  { sx = ax; sy = ay; }
                 else if (grid[ay][ax] == EMPTY) {
                     ++exposed;
@@ -177,6 +186,18 @@ void lava_update(FluidState& f, int frame, float dt) {
             if (wx >= 0 && rand01() < BOIL_PROB) fluid_remove(f, wx, wy);
 
             if (h <= 0.0f) { freeze(x, y); continue; }
+
+            // Ice melts back into water. Paid for out of the same heat budget as
+            // sand, but with no MELT_MIN floor: anything still molten enough to
+            // be lava is molten enough to melt ice it is touching. The cell has
+            // to be cleared before it can be filled — fluid_add_density refuses
+            // to seed into anything the solver counts as solid.
+            if (ix >= 0 && rand01() < ICE_MELT_PROB) {
+                grid[iy][ix] = EMPTY;
+                fluid_add_density(f, ix, iy, 0.5f);
+                h -= MELT_COST;
+                if (h <= 0.0f) { freeze(x, y); continue; }
+            }
 
             // Melting is paid for out of this cell's own heat, and that cost is
             // what stops a flow from chain-reacting through a whole dune: a cell

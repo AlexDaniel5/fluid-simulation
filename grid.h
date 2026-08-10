@@ -23,6 +23,10 @@ const int TOTAL = PADDED_W * PADDED_H;
 // LAVA is molten and moves; ROCK is what it freezes into. ROCK behaves exactly
 // like SOLID everywhere in the physics — it exists so that land you poured is
 // visually distinguishable from a wall you drew.
-enum CellType { EMPTY = 0, SOLID = 1, SAND = 2, LAVA = 3, ROCK = 4 };
+//
+// ICE is the one rigid material that moves: it falls under gravity like sand but
+// never slides or slumps, so it stacks into vertical columns, and it rides on
+// water rather than sinking through it.
+enum CellType { EMPTY = 0, SOLID = 1, SAND = 2, LAVA = 3, ROCK = 4, ICE = 5 };
 
 extern int grid[GRID_HEIGHT][GRID_WIDTH];

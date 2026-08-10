@@ -3,7 +3,7 @@
 #include "grid.h"
 #include "fluid.h"
 
-enum DrawMode { MODE_SOLID = 0, MODE_SAND, MODE_FLUID, MODE_WIND, MODE_LAVA, MODE_COUNT };
+enum DrawMode { MODE_SOLID = 0, MODE_SAND, MODE_FLUID, MODE_WIND, MODE_LAVA, MODE_ICE, MODE_COUNT };
 
 // Brush radius in cells (0 = single cell). Adjusted with [ and ]. Scaled so the
 // brush covers the same patch of screen whatever the cell size is.

@@ -551,16 +551,46 @@ static void draw_glow(SDL_Renderer* renderer) {
     SDL_RenderCopy(renderer, glowTex, &box, &dst);
 }
 
+// Ice is drawn here rather than as a metaball because the blockiness is the
+// point: crisp cells with per-cell facets read as crystal next to the rounded
+// silhouettes of water and sand, and a pale cyan sits well clear of both the
+// deep blue of water and the flat grey of a drawn wall.
+// Lip thickness is a fraction of the cell, not a fixed pixel count and not a
+// CELL_SCALE quantity: it wants to stay the same *share* of a block whatever the
+// zoom, so a stack looks the same at any cell size. Never less than one pixel.
+static const int ICE_LIP = CELL_SIZE / 5 > 0 ? CELL_SIZE / 5 : 1;
+
 static void draw_solids(SDL_Renderer* renderer) {
     for (int y = 0; y < GRID_HEIGHT; ++y) {
         for (int x = 0; x < GRID_WIDTH; ++x) {
             int c = grid[y][x];
-            if (c != SOLID && c != ROCK) continue;
+            if (c != SOLID && c != ROCK && c != ICE) continue;
+            SDL_Rect cell = {x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE};
+
+            if (c == ICE) {
+                // Same stable position hash the sand grain and the lava crust
+                // use, so the facets are pinned to the world and never shimmer
+                // as a block falls past.
+                float facet = 0.92f + 0.16f * hash01(x, y);
+                SDL_SetRenderDrawColor(renderer,
+                                       (Uint8)std::min(150.0f * facet, 255.0f),
+                                       (Uint8)std::min(214.0f * facet, 255.0f),
+                                       (Uint8)std::min(240.0f * facet, 255.0f), 255);
+                SDL_RenderFillRect(renderer, &cell);
+                // A lit top edge wherever the block is open to the air, so a
+                // stack reads as a surface catching light rather than a slab.
+                if (y == 0 || grid[y - 1][x] != ICE) {
+                    SDL_SetRenderDrawColor(renderer, 228, 246, 255, 255);
+                    SDL_Rect lip = {cell.x, cell.y, CELL_SIZE, ICE_LIP};
+                    SDL_RenderFillRect(renderer, &lip);
+                }
+                continue;
+            }
+
             // Drawn walls stay bright; rock you poured is dark basalt, so an
             // island built by quenching lava reads as its own material.
             if (c == SOLID) SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);
             else            SDL_SetRenderDrawColor(renderer, 70, 62, 58, 255);
-            SDL_Rect cell = {x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE};
             SDL_RenderFillRect(renderer, &cell);
         }
     }
