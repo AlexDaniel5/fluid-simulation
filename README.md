@@ -4,6 +4,18 @@ A real-time 2D fluid, sand, lava, and solid sandbox built in C++ with [SDL2](htt
 Draw obstacles, pour sand, fling water, and lay down molten rock on an interactive grid — the
 materials interact with each other under gravity.
 
+## Quick start
+
+```sh
+sudo apt install build-essential pkg-config libsdl2-dev
+make
+./build/fluid-simulation
+```
+
+Then: **Space** cycles the material (`SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA`), **left-drag**
+draws it, **hold E** erases, **`[`** / **`]`** resize the brush, and **C** clears the screen. Try
+drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to build an island.
+
 ## Features
 
 - **PIC/FLIP free-surface liquid solver.** Water is carried by marker particles, while a
