@@ -53,7 +53,12 @@ island — or float a raft of `ICE` on the water and drop lava on it to melt it 
   becomes a wave rather than a rigid shove. Dry surface grains roll and saltate downwind, a
   strong updraft plucks them off the pile, and wet sand clings. Moving air also carries heat off
   exposed lava far faster than still air does, so a gust freezes a flow where it stands. Solids,
-  sand, ice, lava and rock all block a gust, so a wall casts a wind shadow.
+  sand, ice, lava and rock all block a gust, so a wall casts a wind shadow. Since air has nothing
+  to draw of its own, the field is shown twice over: streaks along the flow, which map where the
+  current stands, and a pool of tracers advected through it, which is what actually makes the air
+  read as moving — a still vector field is easy to miss, a moving one isn't. Tracer count scales
+  with how much of the screen is blowing, and both layers batch their lines by brightness so the
+  overlay costs a couple of dozen draw-state changes a frame instead of thousands.
 - **Metaball rendering.** Water, sand and lava are splatted into a half-resolution blob field and
   thresholded for a smooth liquid/granular surface. Water is shaded by depth (deeper = darker)
   and speed (fast = foamy), and sand darkens when wet, drying out slowly over time. Lava is
