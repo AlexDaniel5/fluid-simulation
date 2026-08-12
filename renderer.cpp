@@ -3,6 +3,7 @@
 #include "lava.h"
 #include <vector>
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
 
 // Water and sand are rendered as metaballs: each particle (or sand cell)
@@ -596,26 +597,243 @@ static void draw_solids(SDL_Renderer* renderer) {
     }
 }
 
-// Moving air has nothing to draw of its own, so show it as faint streaks along
-// the flow — otherwise the wind brush is invisible and the water just twitches.
-// Sampled every other cell to keep the overlay readable.
-static const float WIND_VIS_REF = 30.0f * CELL_SCALE;  // speed drawn full-length
+// Moving air has nothing to draw of its own, so the overlay is two layers: a
+// streak per sampled cell, which maps the standing shape of the field, and a pool
+// of tracers advected through that field, which is what actually makes the flow
+// read. A static vector field is easy to miss on a busy screen; something moving
+// through it is not.
+//
+// Speed drawn at full brightness. Well under the brush's own speed on purpose:
+// the gust is feathered to nothing at its rim and blended in over several
+// frames, so the field a stroke actually leaves behind mostly sits far below the
+// brush's peak. Referencing the peak made the whole overlay render at a fraction
+// of its intended contrast.
+static const float WIND_VIS_REF = 12.0f * CELL_SCALE;
+static const float WIND_VIS_MIN = 2.0f * CELL_SCALE;   // slower air isn't drawn
 static const int   WIND_VIS_STEP = (int)(2 * CELL_SCALE);  // cells between streaks
 
-static void draw_wind(SDL_Renderer* renderer) {
-    if (!wind_active()) return;
+// One tracer per this many windy cells, so a brush-sized gust gets a readable
+// sprinkle instead of a solid mat, clamped at both ends: a floor so a small
+// gust is still obvious, a ceiling so a screen-wide current stays cheap to draw.
+static const int   TRACER_PER_CELLS = 6;
+static const int   TRACER_MIN = 40;
+static const int   TRACER_MAX = 700;
+static const int   TRACER_SEED_STEP = 2;  // cells between candidate spawn points
+static const int   TRAIL_PTS = 6;         // trail positions kept per tracer
+static const int   TRACER_SUBSTEPS = 3;   // advection steps per frame
+static const int   TRACER_LIFE = 120;     // frames before a forced respawn
+static const float TRACER_FADE = 10.0f;   // frames of fade at each end of life
+// The renderer has no clock of its own; this is the step main passes the solvers,
+// so a tracer covers the same ground per frame as the air it is drawn from.
+static const float TRACER_DT = 0.1f;
 
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+// A trail is a ring of recent positions in simulation pixels, newest at head.
+struct WindTracer {
+    float px[TRAIL_PTS], py[TRAIL_PTS];
+    int   head;    // index of the newest point
+    int   filled;  // points written so far, capped at TRAIL_PTS
+    int   age;
+    int   life;
+    bool  alive;
+};
+static std::vector<WindTracer> tracers;
+static std::vector<int> windySeeds;  // packed cell indices, rebuilt each frame
+
+static inline float wrand01() { return (float)std::rand() / (float)RAND_MAX; }
+
+// SDL folds consecutive primitives into one GPU draw, but only while the render
+// state holds still — so setting a colour per streak would flush the pipeline
+// thousands of times a frame, which cost more than the geometry did. Both layers
+// instead quantise alpha into a few tiers, collect their geometry, and emit one
+// tier at a time: the same lines and dots for a couple of dozen state changes.
+static const int WIND_TIERS = 8;
+
+struct WindSeg { int x0, y0, x1, y1; };
+struct WindBatch {
+    std::vector<WindSeg>  segs[WIND_TIERS];  // flow lines, in the pale colour
+    std::vector<SDL_Rect> dots[WIND_TIERS];  // heads and tips, in the bright one
+};
+static WindBatch fieldBatch;   // the standing streaks
+static WindBatch tracerBatch;  // the moving comets
+
+static inline int wind_tier(float alpha) {
+    int t = (int)(alpha * WIND_TIERS / 256.0f);
+    return t < 0 ? 0 : (t >= WIND_TIERS ? WIND_TIERS - 1 : t);
+}
+// The alpha a whole tier is drawn at: the middle of its band. Eight bands is
+// coarse arithmetically and invisible at these opacities.
+static inline Uint8 wind_tier_alpha(int tier) {
+    return (Uint8)((tier * 2 + 1) * 128 / WIND_TIERS);
+}
+
+static void batch_clear(WindBatch& b) {
+    for (int i = 0; i < WIND_TIERS; ++i) { b.segs[i].clear(); b.dots[i].clear(); }
+}
+
+// Queue a 2-pixel-wide line as two 1-pixel lines a pixel apart across the
+// direction of travel. Hairlines vanish against water and sand; this is what
+// keeps a streak readable without a second render target to thicken it in.
+static void batch_thick_seg(WindBatch& b, int tier, float x0, float y0,
+                            float x1, float y1) {
+    int ix0 = (int)x0, iy0 = (int)y0, ix1 = (int)x1, iy1 = (int)y1;
+    b.segs[tier].push_back({ ix0, iy0, ix1, iy1 });
+    float dx = x1 - x0, dy = y1 - y0;
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.5f) return;
+    // Perpendicular, snapped to a whole pixel: at this width anything finer just
+    // lands on the same row of pixels twice.
+    int ox = (int)std::lround(-dy / len), oy = (int)std::lround(dx / len);
+    if (ox == 0 && oy == 0) return;
+    b.segs[tier].push_back({ ix0 + ox, iy0 + oy, ix1 + ox, iy1 + oy });
+}
+
+static void batch_flush(SDL_Renderer* renderer, WindBatch& b,
+                        Uint8 sr, Uint8 sg, Uint8 sb,
+                        Uint8 dr, Uint8 dg, Uint8 db) {
+    for (int t = 0; t < WIND_TIERS; ++t) {
+        if (b.segs[t].empty()) continue;
+        SDL_SetRenderDrawColor(renderer, sr, sg, sb, wind_tier_alpha(t));
+        for (const WindSeg& s : b.segs[t])
+            SDL_RenderDrawLine(renderer, s.x0, s.y0, s.x1, s.y1);
+    }
+    for (int t = 0; t < WIND_TIERS; ++t) {
+        if (b.dots[t].empty()) continue;
+        SDL_SetRenderDrawColor(renderer, dr, dg, db, wind_tier_alpha(t));
+        SDL_RenderFillRects(renderer, b.dots[t].data(), (int)b.dots[t].size());
+    }
+}
+
+// Bilinear sample of the cell-centered wind field at a point in sim pixels.
+// Nearest-cell sampling makes a tracer jerk as it crosses a cell boundary; the
+// interpolation is what turns the pool into smooth streamlines. Outside the grid
+// wind_u/wind_v read as still air, so edges need no special case.
+static void wind_sample(float x, float y, float* u, float* v) {
+    float gx = x / CELL_SIZE - 0.5f, gy = y / CELL_SIZE - 0.5f;
+    int x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
+    float fx = gx - x0, fy = gy - y0;
+    float u0 = wind_u(x0, y0) * (1 - fx) + wind_u(x0 + 1, y0) * fx;
+    float u1 = wind_u(x0, y0 + 1) * (1 - fx) + wind_u(x0 + 1, y0 + 1) * fx;
+    float v0 = wind_v(x0, y0) * (1 - fx) + wind_v(x0 + 1, y0) * fx;
+    float v1 = wind_v(x0, y0 + 1) * (1 - fx) + wind_v(x0 + 1, y0 + 1) * fx;
+    *u = u0 * (1 - fy) + u1 * fy;
+    *v = v0 * (1 - fy) + v1 * fy;
+}
+
+// Drop a tracer at a random point in a random windy cell. Tracers that find no
+// seed go dormant rather than sitting in still air where they'd never move.
+static void tracer_spawn(WindTracer& t) {
+    if (windySeeds.empty()) { t.alive = false; return; }
+    int c = windySeeds[std::rand() % (int)windySeeds.size()];
+    t.px[0] = (c % GRID_WIDTH + wrand01()) * CELL_SIZE;
+    t.py[0] = (c / GRID_WIDTH + wrand01()) * CELL_SIZE;
+    t.head = 0;
+    t.filled = 1;
+    t.age = 0;
+    // Jittered, or every tracer spawned in the same frame would expire together
+    // and the overlay would blink.
+    t.life = TRACER_LIFE / 2 + (int)(wrand01() * TRACER_LIFE);
+    t.alive = true;
+}
+
+// Advect the pool one frame and draw each trail as a comet: dim tail, bright head.
+static void draw_wind_tracers(SDL_Renderer* renderer) {
+    // Rebuild the spawn pool. Strided, since these are only candidate spawn
+    // points — the tracer picks a random spot inside the cell it lands on.
+    windySeeds.clear();
+    for (int y = 0; y < GRID_HEIGHT; y += TRACER_SEED_STEP) {
+        for (int x = 0; x < GRID_WIDTH; x += TRACER_SEED_STEP) {
+            float wu = wind_u(x, y), wv = wind_v(x, y);
+            if (wu * wu + wv * wv >= WIND_VIS_MIN * WIND_VIS_MIN)
+                windySeeds.push_back(x + GRID_WIDTH * y);
+        }
+    }
+    if (windySeeds.empty()) { tracers.clear(); return; }
+
+    // Seeds are strided, so scale back up to get the windy area in cells.
+    int windyCells = (int)windySeeds.size() * TRACER_SEED_STEP * TRACER_SEED_STEP;
+    int want = std::max(TRACER_MIN, std::min(TRACER_MAX, windyCells / TRACER_PER_CELLS));
+    if ((int)tracers.size() > want) tracers.resize(want);
+    while ((int)tracers.size() < want) {
+        WindTracer t;
+        tracer_spawn(t);
+        tracers.push_back(t);
+    }
+
+    batch_clear(tracerBatch);
+    for (WindTracer& t : tracers) {
+        if (!t.alive) { tracer_spawn(t); if (!t.alive) continue; }
+
+        float speed = 0.0f;
+        for (int s = 0; s < TRACER_SUBSTEPS; ++s) {
+            float x = t.px[t.head], y = t.py[t.head];
+            float u, v;
+            wind_sample(x, y, &u, &v);
+            speed = std::sqrt(u * u + v * v);
+            // Air here is still — the tracer has run off the end of the gust, or
+            // into the wind shadow of a wall. Restart it somewhere useful.
+            if (speed < WIND_VIS_MIN) { t.alive = false; break; }
+            float nx = x + u * CELL_SIZE * TRACER_DT / TRACER_SUBSTEPS;
+            float ny = y + v * CELL_SIZE * TRACER_DT / TRACER_SUBSTEPS;
+            if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) { t.alive = false; break; }
+            t.head = (t.head + 1) % TRAIL_PTS;
+            t.px[t.head] = nx;
+            t.py[t.head] = ny;
+            if (t.filled < TRAIL_PTS) ++t.filled;
+        }
+        if (!t.alive) continue;
+        if (++t.age >= t.life) { t.alive = false; continue; }
+
+        // Fade in on spawn and out before the forced respawn, so tracers appear
+        // and vanish instead of popping mid-flow.
+        float fade = std::min(1.0f, std::min(t.age / TRACER_FADE,
+                                             (t.life - t.age) / TRACER_FADE));
+        // A generous floor on brightness: a slow tracer still has to be visible,
+        // since its motion is the only thing telling you the air is moving at all.
+        float lit = fade * (0.55f + 0.45f * std::min(speed / WIND_VIS_REF, 1.0f));
+
+        // Oldest to newest, brightening toward the head. The two segments nearest
+        // the head are drawn wide, so each tracer reads as a comet rather than a
+        // stray pixel; the tail thins out behind it.
+        for (int i = t.filled - 1; i > 0; --i) {
+            int b = (t.head - i + TRAIL_PTS) % TRAIL_PTS;
+            int a = (t.head - i + 1 + TRAIL_PTS) % TRAIL_PTS;
+            float w = (float)(t.filled - i) / (float)t.filled;  // 0 tail, 1 head
+            int tier = wind_tier(lit * w * 235.0f);
+            if (i <= 2)
+                batch_thick_seg(tracerBatch, tier, t.px[b], t.py[b], t.px[a], t.py[a]);
+            else
+                tracerBatch.segs[tier].push_back({ (int)t.px[b], (int)t.py[b],
+                                                   (int)t.px[a], (int)t.py[a] });
+        }
+        // A bright head, which is what the eye tracks from frame to frame.
+        int htier = wind_tier(lit * 250.0f);
+        tracerBatch.dots[htier].push_back(
+            { (int)t.px[t.head] - 1, (int)t.py[t.head] - 1, 3, 3 });
+    }
+
+    // Additive, so overlapping trails pile into a brighter airstream the way a
+    // strong gust should look.
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_ADD);
+    batch_flush(renderer, tracerBatch, 165, 205, 240, 235, 245, 255);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+}
+
+static void draw_wind(SDL_Renderer* renderer) {
+    if (!wind_active()) { tracers.clear(); return; }
+
+    batch_clear(fieldBatch);
     for (int y = 0; y < GRID_HEIGHT; y += WIND_VIS_STEP) {
         for (int x = 0; x < GRID_WIDTH; x += WIND_VIS_STEP) {
             float wu = wind_u(x, y), wv = wind_v(x, y);
             float speed = std::sqrt(wu * wu + wv * wv);
-            if (speed < 2.0f * CELL_SCALE) continue;
+            if (speed < WIND_VIS_MIN) continue;
 
             float t = std::min(speed / WIND_VIS_REF, 1.0f);
             // Streak length in pixels, so the overlay keeps its density and
-            // scale on screen rather than shrinking with the cell.
-            float len = (0.6f + 1.4f * t) * CELL_SIZE * CELL_SCALE;
+            // scale on screen rather than shrinking with the cell. Long enough
+            // that neighbouring streaks nearly touch, which is what makes a
+            // painted current read as continuous lines of flow.
+            float len = (1.0f + 1.2f * t) * CELL_SIZE * CELL_SCALE;
             float cx = (x + 0.5f) * CELL_SIZE;
             float cy = (y + 0.5f) * CELL_SIZE;
             // Center the streak on the cell so it reads as flow, not as a ray
@@ -623,15 +841,18 @@ static void draw_wind(SDL_Renderer* renderer) {
             float hx = 0.5f * len * wu / speed;
             float hy = 0.5f * len * wv / speed;
 
-            SDL_SetRenderDrawColor(renderer, 190, 215, 235, (Uint8)(30 + 110 * t));
-            SDL_RenderDrawLine(renderer, (int)(cx - hx), (int)(cy - hy),
-                               (int)(cx + hx), (int)(cy + hy));
+            batch_thick_seg(fieldBatch, wind_tier(70 + 130 * t),
+                            cx - hx, cy - hy, cx + hx, cy + hy);
             // Brighter tip, so the streak reads directionally.
-            SDL_SetRenderDrawColor(renderer, 235, 245, 255, (Uint8)(60 + 150 * t));
-            SDL_RenderDrawPoint(renderer, (int)(cx + hx), (int)(cy + hy));
+            fieldBatch.dots[wind_tier(110 + 145 * t)].push_back(
+                { (int)(cx + hx), (int)(cy + hy), 2, 2 });
         }
     }
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    batch_flush(renderer, fieldBatch, 190, 215, 235, 235, 245, 255);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    draw_wind_tracers(renderer);
 }
 
 static void draw_grid_lines(SDL_Renderer* renderer) {
