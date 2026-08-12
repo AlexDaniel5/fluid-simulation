@@ -14,17 +14,38 @@ const int BRUSH_DEFAULT = (int)(1 * CELL_SCALE);
 struct InputState {
     bool isDrawing;
     bool showGrid;   // debug grid-line overlay, toggled with G
-    bool eraseHeld;  // E held down: drawing rubs out cells instead of the active material
+    // Two independent ways to be erasing, because they suit different jobs.
+    // eraseHeld is E held down — momentary, for a quick rub-out mid-stroke
+    // without losing the tool you were using. eraseSticky is the menu's ERASE
+    // button — latched, so erasing behaves like picking a tool and stays on
+    // until another tool is picked. Read them through input_erasing().
+    bool eraseHeld;
+    bool eraseSticky;
     DrawMode mode;
     int brushRadius;
     int prevMouseX;
     int prevMouseY;
+    // Cursor position in *logical* (whole-window) coordinates, tracked on every
+    // motion event whether or not a button is down, so the menu can highlight
+    // the button under the pointer.
+    int mouseX;
+    int mouseY;
     // Unit vector the wind brush blows along. Aimed by stroking the mouse and
     // kept afterwards, so holding still leaves a steady jet rather than dead
     // air. Starts pointing right so a plain click already does something.
     float windDirX;
     float windDirY;
 };
+
+// True while drawing should rub cells out rather than lay material down, by
+// either route. Everything that paints asks this rather than reading the two
+// flags, so the momentary and latched cases can never disagree.
+inline bool input_erasing(const InputState& s) { return s.eraseHeld || s.eraseSticky; }
+
+// Wipe the scene: every particle, every cell, the heat behind the lava and the
+// standing wind. Shared by the C key and the menu's CLEAR button so the two
+// cannot drift apart.
+void input_clear_all(FluidState& fluid);
 
 void input_init(InputState& state);
 // Returns false when the user requests quit.

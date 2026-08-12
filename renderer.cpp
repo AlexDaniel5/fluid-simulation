@@ -1,15 +1,19 @@
 #include "renderer.h"
 #include "wind.h"
 #include "lava.h"
+#include "font_silkscreen.h"
+#include <SDL_ttf.h>
 #include <vector>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <cstdio>
 #include <algorithm>
 
 // Water and sand are rendered as metaballs: each particle (or sand cell)
 // splats a radial blob into a half-resolution field, which is thresholded
 // into a smooth surface. Solids stay as crisp rectangles.
-static const int   RW = WIDTH / 2;
+static const int   RW = SIM_W / 2;
 static const int   RH = HEIGHT / 2;
 static const float PSCALE = CELL_SIZE * 0.5f;  // half-res pixels per cell
 static const float BLOB_R = 0.9f * PSCALE;     // particle splat radius
@@ -61,6 +65,80 @@ static std::vector<float> glowT;   // scratch for the separable blur
 static int lbX0, lbY0, lbX1, lbY1;
 static int gbX0, gbY0, gbX1, gbY1;
 
+// ---------------------------------------------------------------- text -----
+//
+// The menu is the only thing here made of glyphs rather than fields, but it
+// still lives in the renderer, which is what owns SDL resource lifetime.
+//
+// Silkscreen is a pixel font: its glyphs are drawn on an 8px grid, so it is
+// crisp at multiples of 8 and mush at anything else. Everything below exists to
+// stop something from softening it on the way to the screen — the size is 3x
+// native, hinting is mono (on/off coverage, not greyscale), kerning is off so
+// spacing stays on the pixel grid, and glyphs are rendered Solid rather than
+// Blended because Blended anti-aliases.
+static const int UI_FONT_PX = 24;  // 3x Silkscreen's 8px native grid
+
+static TTF_Font* uiFont = nullptr;
+
+// Labels are a fixed, tiny set that never changes, so each string is rasterised
+// once and then blitted. Rendered white and tinted at draw time with a color
+// mod, so the same texture serves the active and idle colors.
+struct TextEntry {
+    // A copy, not the caller's pointer: some callers build their string in a
+    // stack buffer that is gone by the next frame, and keying on that pointer
+    // would leave the cache comparing freed memory.
+    char key[24];
+    SDL_Texture* tex;
+    int w, h;
+};
+static TextEntry textCache[64];
+static int textCacheCount = 0;
+
+static TextEntry* text_entry(SDL_Renderer* renderer, const char* s) {
+    for (int i = 0; i < textCacheCount; ++i)
+        if (std::strcmp(textCache[i].key, s) == 0) return &textCache[i];
+    if (!uiFont || textCacheCount >= (int)(sizeof(textCache) / sizeof(textCache[0])))
+        return nullptr;
+
+    const SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface* surf = TTF_RenderUTF8_Solid(uiFont, s, white);
+    if (!surf) return nullptr;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+    if (!tex) {
+        SDL_FreeSurface(surf);
+        return nullptr;
+    }
+    // Per-texture, deliberately: the global scale-quality hint is "1" (linear)
+    // because the metaball water and sand want a smooth upscale. Flipping that
+    // globally to get crisp text would visibly pixelate them instead.
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+
+    TextEntry& e = textCache[textCacheCount++];
+    std::snprintf(e.key, sizeof(e.key), "%s", s);
+    e.tex = tex;
+    e.w = surf->w;
+    e.h = surf->h;
+    SDL_FreeSurface(surf);
+    return &e;
+}
+
+void renderer_text_draw(SDL_Renderer* renderer, int x, int y, const char* s,
+                        SDL_Color c) {
+    TextEntry* e = text_entry(renderer, s);
+    if (!e) return;
+    SDL_SetTextureColorMod(e->tex, c.r, c.g, c.b);
+    SDL_SetTextureAlphaMod(e->tex, c.a);
+    SDL_Rect dst = {x, y, e->w, e->h};
+    SDL_RenderCopy(renderer, e->tex, nullptr, &dst);
+}
+
+void renderer_text_size(const char* s, int* w, int* h) {
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (uiFont) TTF_SizeUTF8(uiFont, s, w, h);
+}
+
 void renderer_init(SDL_Renderer* renderer) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");  // smooth upscale
     viewRenderer = renderer;
@@ -106,6 +184,18 @@ void renderer_init(SDL_Renderer* renderer) {
     lavaHF.resize(RW * RH);
     glowF.resize(GW * GH);
     glowT.resize(GW * GH);
+
+    // The font is compiled in (font_silkscreen.h), so this reads from memory
+    // rather than disk and cannot fail for a missing file. SDL_RWFromConstMem's
+    // stream is handed to SDL_ttf with freesrc=1 so it closes it for us.
+    if (TTF_Init() == 0) {
+        SDL_RWops* rw = SDL_RWFromConstMem(SILKSCREEN_TTF, (int)SILKSCREEN_TTF_LEN);
+        uiFont = TTF_OpenFontRW(rw, 1, UI_FONT_PX);
+        if (uiFont) {
+            TTF_SetFontHinting(uiFont, TTF_HINTING_MONO);
+            TTF_SetFontKerning(uiFont, 0);
+        }
+    }
 }
 
 static void draw_background(SDL_Renderer* renderer) {
@@ -233,7 +323,7 @@ static void draw_fluid(SDL_Renderer* renderer, const FluidState& fluid) {
     }
 
     SDL_UnlockTexture(fluidTex);
-    SDL_Rect dst = {0, 0, WIDTH, HEIGHT};
+    SDL_Rect dst = {0, 0, SIM_W, HEIGHT};
     SDL_RenderCopy(renderer, fluidTex, nullptr, &dst);
 }
 
@@ -326,7 +416,7 @@ static void draw_sand(SDL_Renderer* renderer) {
     }
 
     SDL_UnlockTexture(sandTex);
-    SDL_Rect dst = {0, 0, WIDTH, HEIGHT};
+    SDL_Rect dst = {0, 0, SIM_W, HEIGHT};
     SDL_RenderCopy(renderer, sandTex, nullptr, &dst);
 }
 
@@ -774,7 +864,7 @@ static void draw_wind_tracers(SDL_Renderer* renderer) {
             if (speed < WIND_VIS_MIN) { t.alive = false; break; }
             float nx = x + u * CELL_SIZE * TRACER_DT / TRACER_SUBSTEPS;
             float ny = y + v * CELL_SIZE * TRACER_DT / TRACER_SUBSTEPS;
-            if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) { t.alive = false; break; }
+            if (nx < 0 || nx >= SIM_W || ny < 0 || ny >= HEIGHT) { t.alive = false; break; }
             t.head = (t.head + 1) % TRAIL_PTS;
             t.px[t.head] = nx;
             t.py[t.head] = ny;
@@ -857,14 +947,40 @@ static void draw_wind(SDL_Renderer* renderer) {
 
 static void draw_grid_lines(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
-    for (int x = 0; x < WIDTH; x += CELL_SIZE)
+    for (int x = 0; x < SIM_W; x += CELL_SIZE)
         SDL_RenderDrawLine(renderer, x, 0, x, HEIGHT);
     for (int y = 0; y < HEIGHT; y += CELL_SIZE)
-        SDL_RenderDrawLine(renderer, 0, y, WIDTH, y);
+        SDL_RenderDrawLine(renderer, 0, y, SIM_W, y);
 }
 
 void renderer_draw(SDL_Renderer* renderer, const FluidState& fluid, bool showGrid) {
     draw_background(renderer);
+
+    // Everything below draws the simulation, which lives to the right of the
+    // tool menu. A viewport shifts it there for free: the passes keep working in
+    // sim-local pixels (0..SIM_W) exactly as they did when the sim was the whole
+    // window, and SDL does the translation. The alternative — adding PANEL_W to
+    // every rect and every splat — would put the offset in a hundred places
+    // instead of one.
+    //
+    // The offset has to be *relative to the viewport already installed*, not
+    // absolute. SDL_RenderSetLogicalSize implements its letterboxing by setting
+    // a viewport whose origin is the top-left of the letterboxed area, so on any
+    // window that isn't exactly 16:9 the base viewport carries a bar offset
+    // (measured: {0,103,1600,899} in a 1300x900 window). SDL_RenderSetViewport
+    // *replaces* that rather than composing with it, and passing nullptr to
+    // restore resets to the whole output surface, not to the letterbox. Either
+    // mistake silently drags the whole frame into the top-left corner — and
+    // fit_window_to_display rounds the window size, so a non-16:9 window is the
+    // normal startup case, not a corner case.
+    //
+    // Re-reading it every frame is also what makes a window resize self-healing,
+    // since SDL rewrites the viewport itself when the window changes size.
+    SDL_Rect base;
+    SDL_RenderGetViewport(renderer, &base);
+    const SDL_Rect simView = {base.x + PANEL_W, base.y, SIM_W, HEIGHT};
+    SDL_RenderSetViewport(renderer, &simView);
+
     draw_fluid(renderer, fluid);
     draw_sand(renderer);
     draw_solids(renderer);
@@ -875,6 +991,28 @@ void renderer_draw(SDL_Renderer* renderer, const FluidState& fluid, bool showGri
     draw_wind(renderer);
     if (showGrid)
         draw_grid_lines(renderer);
+
+    // Back to the letterboxed base, so the menu draws in plain logical
+    // coordinates. This must be the base rect and not nullptr — see above.
+    //
+    // It also has to happen before this function returns, and on every path:
+    // SDL translates incoming mouse events, and SDL_RenderWindowToLogical reads,
+    // whichever viewport is installed at the time. input_update runs between
+    // frames (main.cpp), so it sees whatever the last draw left behind — leave
+    // simView installed and every coordinate arrives already shifted, which
+    // renderer_logical_to_sim would then shift a second time.
+    SDL_RenderSetViewport(renderer, &base);
+}
+
+bool renderer_logical_to_sim(int lx, int ly, int* sx, int* sy) {
+    // The sim is drawn through a viewport starting at PANEL_W (see
+    // renderer_draw), so undoing that shift here is what keeps the cell under
+    // the cursor the cell that gets painted.
+    const int x = lx - PANEL_W;
+    if (x < 0 || x >= SIM_W || ly < 0 || ly >= HEIGHT) return false;
+    *sx = x;
+    *sy = ly;
+    return true;
 }
 
 bool renderer_window_to_sim(int wx, int wy, int* sx, int* sy) {
@@ -882,17 +1020,20 @@ bool renderer_window_to_sim(int wx, int wy, int* sx, int* sy) {
     if (viewRenderer) SDL_RenderWindowToLogical(viewRenderer, wx, wy, &fx, &fy);
     // Floor rather than truncate: inside a letterbox bar the coordinate is
     // negative, and truncation would fold it onto the first row or column.
-    *sx = (int)std::floor(fx);
-    *sy = (int)std::floor(fy);
-    return renderer_sim_contains(*sx, *sy);
-}
-
-bool renderer_sim_contains(int sx, int sy) {
-    return sx >= 0 && sx < WIDTH && sy >= 0 && sy < HEIGHT;
+    return renderer_logical_to_sim((int)std::floor(fx), (int)std::floor(fy),
+                                   sx, sy);
 }
 
 void renderer_destroy() {
     viewRenderer = nullptr;
+    for (int i = 0; i < textCacheCount; ++i)
+        SDL_DestroyTexture(textCache[i].tex);
+    textCacheCount = 0;
+    if (uiFont) {
+        TTF_CloseFont(uiFont);
+        uiFont = nullptr;
+        TTF_Quit();
+    }
     if (fluidTex) {
         SDL_DestroyTexture(fluidTex);
         fluidTex = nullptr;

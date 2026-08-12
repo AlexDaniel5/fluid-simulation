@@ -3,6 +3,7 @@
 #include "lava.h"
 #include "ice.h"
 #include "renderer.h"  // window -> simulation pixel mapping
+#include "ui.h"        // the tool menu gets first refusal on a click
 #include <cstring>
 #include <cmath>
 
@@ -16,10 +17,13 @@ void input_init(InputState& state) {
     state.isDrawing   = false;
     state.showGrid    = false;
     state.eraseHeld   = false;
+    state.eraseSticky = false;
     state.mode        = MODE_SOLID;
     state.brushRadius = BRUSH_DEFAULT;
     state.prevMouseX  = 0;
     state.prevMouseY  = 0;
+    state.mouseX      = -1;  // offscreen until the pointer is first seen
+    state.mouseY      = -1;
     state.windDirX    = 1.0f;
     state.windDirY    = 0.0f;
 }
@@ -44,7 +48,7 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
                      float dx, float dy) {
     // Wind stamps no cells; its gust is applied per frame from input_update so
     // that a held brush keeps blowing. (Erase still works in wind mode.)
-    if (state.mode == MODE_WIND && !state.eraseHeld) return;
+    if (state.mode == MODE_WIND && !input_erasing(state)) return;
 
     int ccx = px / CELL_SIZE;
     int ccy = py / CELL_SIZE;
@@ -55,7 +59,7 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
             int ox = cx - ccx, oy = cy - ccy;
             if (ox * ox + oy * oy > r * r) continue;  // disc, not square
 
-            if (state.eraseHeld) {
+            if (input_erasing(state)) {
                 grid[cy][cx] = EMPTY;
                 fluid_remove(fluid, cx, cy);
                 wind_erase(cx, cy);  // wind never fades on its own
@@ -99,11 +103,26 @@ static void paint_at(InputState& state, FluidState& fluid, int px, int py,
 bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& fluid) {
     if (event.type == SDL_QUIT) return false;
 
+    // Track the pointer whether or not a button is down, so the menu can
+    // highlight what it is hovering. These stay in logical coordinates because
+    // that is the space the menu is laid out in.
+    if (event.type == SDL_MOUSEMOTION) {
+        state.mouseX = event.motion.x;
+        state.mouseY = event.motion.y;
+    }
+
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-        // Event coordinates are already simulation pixels — SDL scales them out
-        // of window space itself, so they only need the bounds check.
-        const int mx = event.button.x, my = event.button.y;
-        if (renderer_sim_contains(mx, my)) {
+        // The menu gets first refusal. If it takes the click we are done —
+        // falling through would also stamp material into the cell behind the
+        // button, which is hidden but very much there.
+        if (ui_click(state, fluid, event.button.x, event.button.y))
+            return true;
+
+        // Event coordinates are logical, not raw window pixels — SDL scales them
+        // out of window space itself — but they still have to be shifted past
+        // the tool menu before they name a cell.
+        int mx, my;
+        if (renderer_logical_to_sim(event.button.x, event.button.y, &mx, &my)) {
             state.isDrawing  = true;
             state.prevMouseX = mx;
             state.prevMouseY = my;
@@ -113,8 +132,8 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
         state.isDrawing = false;
     } else if (event.type == SDL_MOUSEMOTION && state.isDrawing) {
-        const int mx = event.motion.x, my = event.motion.y;
-        if (renderer_sim_contains(mx, my)) {
+        int mx, my;
+        if (renderer_logical_to_sim(event.motion.x, event.motion.y, &mx, &my)) {
             // Deltas are taken in simulation pixels too, so a fling imparts the
             // same impulse whatever the window is scaled to.
             float dx = (float)(mx - state.prevMouseX);
@@ -134,6 +153,9 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
         switch (event.key.keysym.sym) {
             case SDLK_SPACE:
                 state.mode = static_cast<DrawMode>((state.mode + 1) % MODE_COUNT);
+                // Cycling to a tool means you want that tool, not that tool with
+                // a latched eraser still in front of it.
+                state.eraseSticky = false;
                 break;
             case SDLK_e:
                 state.eraseHeld = true;  // momentary: erase while held
@@ -144,9 +166,15 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
             case SDLK_w:
                 wind_clear();  // still the air everywhere, leaving the scene
                 break;
+            // Arrows are the discoverable pair — they match the menu's - and +
+            // buttons, and a first-time user finds them without being told. The
+            // brackets stay because they were the original binding and cost
+            // nothing to keep.
+            case SDLK_LEFT:
             case SDLK_LEFTBRACKET:
                 if (state.brushRadius > BRUSH_MIN) state.brushRadius--;
                 break;
+            case SDLK_RIGHT:
             case SDLK_RIGHTBRACKET:
                 if (state.brushRadius < BRUSH_MAX) state.brushRadius++;
                 break;
@@ -154,10 +182,7 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
                 fluid_reset(fluid);
                 break;
             case SDLK_c:
-                fluid_reset(fluid);
-                wind_clear();
-                lava_clear();
-                memset(grid, 0, sizeof(int) * GRID_HEIGHT * GRID_WIDTH);
+                input_clear_all(fluid);
                 break;
         }
     }
@@ -165,16 +190,34 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
     return true;
 }
 
+void input_clear_all(FluidState& fluid) {
+    fluid_reset(fluid);
+    wind_clear();
+    lava_clear();
+    memset(grid, 0, sizeof(int) * GRID_HEIGHT * GRID_WIDTH);
+}
+
 void input_update(InputState& state, FluidState& fluid) {
-    if (!state.eraseHeld && !(state.isDrawing && state.mode == MODE_WIND)) return;
+    // Only *held* E erases without a click. Holding a key is a deliberate,
+    // self-limiting act, so eating whatever drifts under the cursor is the
+    // point of it. The menu's latched ERASE is a tool instead, and a tool that
+    // destroyed the scene merely by the pointer crossing it would be unusable —
+    // so sticky erase paints on click and drag like every other tool, through
+    // paint_at, and does nothing here.
+    const bool continuousErase = state.eraseHeld;
+    // Erasing outranks the wind brush, so holding E in wind mode rubs cells out
+    // rather than blowing them around.
+    const bool gusting = state.isDrawing && state.mode == MODE_WIND &&
+                         !input_erasing(state);
+    if (!continuousErase && !gusting) return;
 
     int wx, wy, mx, my;
     SDL_GetMouseState(&wx, &wy);
     if (!renderer_window_to_sim(wx, wy, &mx, &my)) return;  // cursor off the sim
 
-    if (state.eraseHeld) {
+    if (continuousErase) {
         // Erase a disc wherever the cursor currently is, every frame. The
-        // eraseHeld branch in paint_at does the actual removal.
+        // erasing branch in paint_at does the actual removal.
         paint_at(state, fluid, mx, my, 0.0f, 0.0f);
         return;
     }

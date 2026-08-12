@@ -7,15 +7,16 @@ molten rock on an interactive grid — the materials interact with each other un
 ## Quick start
 
 ```sh
-sudo apt install build-essential pkg-config libsdl2-dev
+sudo apt install build-essential pkg-config libsdl2-dev libsdl2-ttf-dev
 make
 ./build/fluid-simulation
 ```
 
-Then: **Space** cycles the material (`SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA` → `ICE`),
-**left-drag** draws it, **hold E** erases, **`[`** / **`]`** resize the brush, and **C** clears the
-screen. Try drawing a bowl in `SOLID`, filling it with `FLUID`, then pouring `LAVA` in to build an
-island — or float a raft of `ICE` on the water and drop lava on it to melt it back out.
+Then: **pick a material** from the menu down the left edge (or press **Space** to cycle
+`SOLID` → `SAND` → `WATER` → `WIND` → `LAVA` → `ICE`), **left-drag** to draw it, **hold E** to
+erase, and **`[`** / **`]`** to resize the brush. Try drawing a bowl in `SOLID`, filling it with
+`WATER`, then pouring `LAVA` in to build an island — or float a raft of `ICE` on the water and
+drop lava on it to melt it back out.
 
 ## Features
 
@@ -72,10 +73,18 @@ island — or float a raft of `ICE` on the water and drop lava on it to melt it 
 
 ## Simulation size
 
-The window is 1600×900 with a 5-pixel cell, giving a 320×180 grid. The sim is drawn at that
+The window is 1600×900. The tool menu takes the leftmost 160 pixels, leaving the simulation
+1440×900, which at a 5-pixel cell is a 288×180 grid. The sim is drawn at that
 fixed logical size and scaled to fill the window, so resizing or going fullscreen zooms the
 whole simulation instead of leaving the extra area blank — and because 1600×900 is 16:9, a
-fullscreen 16:9 display has no letterbox bars. `CELL_SIZE` in `grid.h` is
+fullscreen 16:9 display has no letterbox bars.
+
+`PANEL_W` is 160 rather than any other round number because it is the width that leaves no
+rounding anywhere downstream: the remaining 1440 is a whole number of cells (288), a whole
+number of half-resolution metaball pixels (720), and a whole number of the glow field's
+eighth-resolution texels (180), whose 8× upscale then lands back on 1440 exactly. A panel width
+that is not a multiple of 40 leaves one of those fields a fraction of a cell short of the
+sim's edge. `CELL_SIZE` in `grid.h` is
 the zoom control: the physics and shading constants are authored in cell units against a
 10-pixel reference cell and scaled by `CELL_SCALE`, so shrinking the cell pulls the camera back
 — more world in the same window — without changing how fast anything falls, flows, or shades.
@@ -97,12 +106,13 @@ a screen with no liquid skips the velocity pipeline entirely.
 
 ### Linux
 
-Requires `g++`, `make`, `pkg-config`, and the SDL2 development libraries.
+Requires `g++`, `make`, `pkg-config`, and the SDL2 and SDL2_ttf development libraries (SDL2_ttf
+draws the tool menu's labels).
 
 On Debian/Ubuntu:
 
 ```sh
-sudo apt install build-essential pkg-config libsdl2-dev
+sudo apt install build-essential pkg-config libsdl2-dev libsdl2-ttf-dev
 ```
 
 Then build:
@@ -124,11 +134,15 @@ make windows
 
 The executable is produced at `build/fluid-simulation.exe`. It is a GUI-subsystem binary, so
 launching it opens the window with no console behind it, and everything except SDL2 is linked
-statically — `SDL2.dll` is its only runtime dependency.
+statically — `SDL2.dll` and `SDL2_ttf.dll` are its only runtime dependencies.
 
-> The `src/include` headers and `build/SDL2.dll` in the repo are a bundled SDL2 copy; the
-> `windows` target compiles against those headers and links directly against that DLL. The
-> default Linux target instead uses `pkg-config` to locate a system-installed SDL2.
+`SDL2_ttf.dll` is there for the menu's text, and it is the only file the menu costs: the
+upstream build bundles FreeType and HarfBuzz inside it rather than beside it, and the font is
+compiled into the `.exe` (see `font_silkscreen.h`), so there is no loose `.ttf` to go missing.
+
+> The `src/include` headers and the DLLs in `build/` are bundled SDL2 and SDL2_ttf copies; the
+> `windows` target compiles against those headers and links directly against those DLLs. The
+> default Linux target instead uses `pkg-config` to locate system-installed copies.
 
 ## Running
 
@@ -136,28 +150,34 @@ statically — `SDL2.dll` is its only runtime dependency.
 ./build/fluid-simulation
 ```
 
-On Windows, double-click `build\fluid-simulation.exe` in Explorer. It loads `SDL2.dll` from its
-own folder, so the two files have to travel together — copy or move the whole folder rather than
-the `.exe` on its own.
+On Windows, double-click `build\fluid-simulation.exe` in Explorer. It loads `SDL2.dll` and
+`SDL2_ttf.dll` from its own folder, so the three files have to travel together — copy or move
+the whole folder rather than the `.exe` on its own.
 
 ## Controls
 
+Every tool has a button in the menu down the left edge, and every button has a keyboard
+equivalent. The menu is the readout as well as the control: the active tool is the lit row, and
+the brush radius sits at the bottom between the two buttons that change it.
+
 | Input | Action |
 |-------|--------|
+| **Click a menu button** | Pick that tool. Clicks anywhere on the menu strip are swallowed, so a button press never also paints into the simulation behind it |
 | **Left-click (or drag)** | Draw the currently selected material (or fling water in fluid mode) |
-| **Space** | Cycle draw mode: `SOLID` → `SAND` → `FLUID` → `WIND` → `LAVA` → `ICE` |
+| **Space** | Cycle draw mode: `SOLID` → `SAND` → `WATER` → `WIND` → `LAVA` → `ICE`. Also drops a latched erase, since cycling to a tool means you want that tool |
 | **Draw in `LAVA` mode** | Pour molten rock. It only stamps into open space — walls and set rock stand, and sand and ice have to be melted through — so the brush can't dissolve terrain for free. Pour it into water to build an island, across a dune to carve a channel, or leave it alone and watch it crust over and set |
 | **Draw in `ICE` mode** | Drop solid blocks. They fall straight down and stop the moment something supports them, so ice stacks vertically instead of sliding into a pile, and it rides on water rather than sinking. Like lava, it only stamps into open space |
 | **Drag in `WIND` mode** | Blow air along the stroke. The jet keeps its heading, so holding still leaves a steady stream; stroke a new direction to re-aim it. The brush radius sets the gust width, and faint streaks show where the air is moving. Painted wind stays put until erased |
-| **Hold E** | Erase: while held, cells under the cursor are continuously rubbed out (solids, sand, ice, lava, rock, any water that flows in, and any wind blowing there) — no clicking needed |
+| **Hold E** | Erase, momentarily: while held, cells under the cursor are continuously rubbed out (solids, sand, ice, lava, rock, any water that flows in, and any wind blowing there) — no clicking needed. Releasing E returns you to the tool you were already using |
+| **ERASE button** | Erase, latched: erasing becomes the selected tool and stays on until you pick another one or click ERASE again. Unlike hold-E this only rubs out where you click and drag — a latched tool that ate the scene as the pointer merely crossed it would be unusable |
+| **CLEAR button** / **C** | Clear everything: every particle, every cell, the heat behind the lava and the standing wind |
 | **W** | Still the air everywhere, leaving the scene itself alone |
-| **`[`** | Shrink the brush radius |
-| **`]`** | Grow the brush radius |
+| **`−`** / **`+`** buttons | Shrink and grow the brush radius, with the current value between them. A stepper fades out once the radius reaches its limit |
+| **Left / Right arrow** | The same, from the keyboard (**`[`** and **`]`** still work too) |
 | **G** | Toggle the debug grid-line overlay |
 | **R** | Reset the fluid (clears particles, keeps solids/sand) |
-| **C** | Clear everything (fluid *and* the obstacle grid) |
 
-The current draw mode is shown in the window title bar.
+The active tool is shown in the menu, and repeated in the window title bar.
 
 ## Project layout
 
@@ -171,5 +191,7 @@ The current draw mode is shown in the window title bar.
 | `lava.h` / `lava.cpp` | Viscous cellular-automaton lava: heat, cooling, quenching and melting |
 | `ice.h` / `ice.cpp` | Rigid falling ice: gravity, stacking, and floating on water |
 | `input.h` / `input.cpp` | Mouse/keyboard handling and draw modes |
-| `renderer.h` / `renderer.cpp` | Metaball splatting and shading |
+| `ui.h` / `ui.cpp` | The tool menu: button layout, drawing, and hit-testing |
+| `renderer.h` / `renderer.cpp` | Metaball splatting and shading, plus the menu's text |
+| `font_silkscreen.h` | The menu font, compiled in — generated from `assets/` by `make font` |
 | `fluidSimulation.cpp` | Earlier single-file prototype (not part of the `make` build) |

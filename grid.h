@@ -1,10 +1,23 @@
 #pragma once
 
-// 16:9, so scaling up to a fullscreen 16:9 display leaves no letterbox bars —
-// every pixel of the screen is simulation.
+// 16:9, so scaling up to a fullscreen 16:9 display leaves no letterbox bars.
+// The window is not all simulation any more: the tool menu takes a strip off the
+// left edge and the sim gets what is left.
 const int WIDTH = 1600, HEIGHT = 900;
 const int CELL_SIZE = 5;
-const int GRID_WIDTH = WIDTH / CELL_SIZE;
+
+// Tool menu sidebar, along the left edge, in window pixels.
+//
+// 160 is not arbitrary — it is the width that leaves no rounding anywhere
+// downstream. The sim gets 1440, which is exactly 288 cells at a 5-pixel cell,
+// exactly 720 wide at the renderer's half-resolution metaball field, and exactly
+// 180 at the eighth-resolution glow field, whose 8x upscale then lands back on
+// 1440 on the nose. A width that is not a multiple of 40 leaves one of those
+// fields a fraction of a cell short of the sim's right edge.
+const int PANEL_W = 160;
+const int SIM_W = WIDTH - PANEL_W;
+
+const int GRID_WIDTH = SIM_W / CELL_SIZE;
 const int GRID_HEIGHT = HEIGHT / CELL_SIZE;
 
 // The physics and shading constants are authored in cell units (cells/sec,

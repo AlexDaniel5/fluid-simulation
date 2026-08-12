@@ -10,6 +10,7 @@
 #include "ice.h"
 #include "renderer.h"
 #include "input.h"
+#include "ui.h"
 
 // Single definition of the shared grid
 int grid[GRID_HEIGHT][GRID_WIDTH] = {0};
@@ -66,7 +67,9 @@ static const char* mode_name(DrawMode m) {
     switch (m) {
         case MODE_SOLID: return "SOLID";
         case MODE_SAND:  return "SAND";
-        case MODE_FLUID: return "FLUID";
+        // WATER, not FLUID: the enum name is a solver detail, and the menu
+        // button says WATER. The two readouts should agree.
+        case MODE_FLUID: return "WATER";
         case MODE_WIND:  return "WIND";
         case MODE_LAVA:  return "LAVA";
         case MODE_ICE:   return "ICE";
@@ -137,17 +140,19 @@ int main(int argc, char* argv[]) {
         // material flowing under the cursor is removed without clicking.
         input_update(input, fluid);
 
-        // Update window title when draw mode, brush size, or erase state changes
+        // Update window title when draw mode, brush size, or erase state changes.
+        // The menu is the primary readout now; this stays as a secondary one and
+        // so tracks erasing by either route.
         if (input.mode != prevMode || input.brushRadius != prevBrush ||
-            input.eraseHeld != prevErase) {
+            input_erasing(input) != prevErase) {
             char title[64];
             std::snprintf(title, sizeof(title), "FluidSimulation [%s]  brush:%d",
-                          input.eraseHeld ? "ERASE" : mode_name(input.mode),
+                          input_erasing(input) ? "ERASE" : mode_name(input.mode),
                           input.brushRadius);
             SDL_SetWindowTitle(window, title);
             prevMode = input.mode;
             prevBrush = input.brushRadius;
-            prevErase = input.eraseHeld;
+            prevErase = input_erasing(input);
         }
 
         frameCount++;
@@ -163,6 +168,8 @@ int main(int argc, char* argv[]) {
         fluid_step(fluid, 0.1f);
 
         renderer_draw(renderer, fluid, input.showGrid);
+        ui_draw(renderer, input);
+
         SDL_RenderPresent(renderer);
         SDL_Delay(16);
     }
