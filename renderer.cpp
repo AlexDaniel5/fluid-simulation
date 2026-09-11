@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "wind.h"
 #include "lava.h"
+#include "ice.h"
 #include "font_silkscreen.h"
 #include <SDL_ttf.h>
 #include <vector>
@@ -663,15 +664,27 @@ static void draw_solids(SDL_Renderer* renderer) {
                 // use, so the facets are pinned to the world and never shimmer
                 // as a block falls past.
                 float facet = 0.92f + 0.16f * hash01(x, y);
+                // Melt progress shades a block from crisp pale cyan toward the
+                // deeper wet blue of water, so an ice cell taking on heat visibly
+                // slushes over before it finally turns to a fluid particle. The
+                // lit lip fades out on the same curve — a melting surface stops
+                // catching light like a facet and reads as wet.
+                float m = ice_melt_progress(x, y);
+                float base_r = 150.0f + (70.0f  - 150.0f) * m;
+                float base_g = 214.0f + (150.0f - 214.0f) * m;
+                float base_b = 240.0f + (210.0f - 240.0f) * m;
                 SDL_SetRenderDrawColor(renderer,
-                                       (Uint8)std::min(150.0f * facet, 255.0f),
-                                       (Uint8)std::min(214.0f * facet, 255.0f),
-                                       (Uint8)std::min(240.0f * facet, 255.0f), 255);
+                                       (Uint8)std::min(base_r * facet, 255.0f),
+                                       (Uint8)std::min(base_g * facet, 255.0f),
+                                       (Uint8)std::min(base_b * facet, 255.0f), 255);
                 SDL_RenderFillRect(renderer, &cell);
                 // A lit top edge wherever the block is open to the air, so a
                 // stack reads as a surface catching light rather than a slab.
                 if (y == 0 || grid[y - 1][x] != ICE) {
-                    SDL_SetRenderDrawColor(renderer, 228, 246, 255, 255);
+                    Uint8 lip_r = (Uint8)(228 + (120 - 228) * m);
+                    Uint8 lip_g = (Uint8)(246 + (170 - 246) * m);
+                    Uint8 lip_b = (Uint8)(255 + (220 - 255) * m);
+                    SDL_SetRenderDrawColor(renderer, lip_r, lip_g, lip_b, 255);
                     SDL_Rect lip = {cell.x, cell.y, CELL_SIZE, ICE_LIP};
                     SDL_RenderFillRect(renderer, &lip);
                 }

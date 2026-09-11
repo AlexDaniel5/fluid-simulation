@@ -1,5 +1,6 @@
 #include "lava.h"
 #include "wind.h"
+#include "ice.h"
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -37,11 +38,18 @@ static const float MELT_PROB     = 0.08f;   // per-frame chance per touched grai
 static const float MELT_COST     = 0.25f;   // heat spent melting one grain — this is
                                             // what keeps melting self-limiting
 static const float MELT_INHERIT  = 0.5f;    // heat the new melt starts with
-static const float ICE_MELT_PROB = 0.2f;    // per-frame chance per touched block. Higher
-                                            // than sand's: ice goes first and pays the
-                                            // same MELT_COST, but an ice face also
-                                            // quenches, so a flow poured onto a sheet
-                                            // usually only opens a pocket before it sets
+static const float ICE_COND      = 0.05f;   // conduction into ice, per touched face,
+                                            // per frame, at full lava heat. This is
+                                            // the whole lava/ice model now: the lava
+                                            // loses exactly what the ice gains, so the
+                                            // flow cools as it melts rather than
+                                            // quenching into a sink. Set well under
+                                            // the old 0.15 ice quench so a flow stays
+                                            // molten long enough to eat visibly into a
+                                            // block instead of crusting on contact and
+                                            // leaving the ice untouched. Ice's
+                                            // ICE_FUSION threshold sets how much of
+                                            // this it takes to melt a cell through.
 
 // Per-cell state, parallel to grid[][]. Carried along when a cell moves and
 // zeroed at the source, the same way sand carries its fall state.
@@ -145,17 +153,28 @@ void lava_update(FluidState& f, int frame, float dt) {
             // whether it is touching water, and whether there is sand to eat.
             int exposed = 0;
             float quench = 0.0f;
+            float iceLoss = 0.0f;   // heat conducted into touched ice this frame
             float gust = 0.0f;      // strongest air speed on an open face
             int wx = -1, wy = -1;   // a water neighbour to boil, if any
             int sx = -1, sy = -1;   // a sand neighbour to melt, if any
-            int ix = -1, iy = -1;   // an ice neighbour to melt, if any
+            const float lh = heat[y][x];  // this cell's heat, the hot side of every
+                                          // conduction below (ice sits at ambient ~0)
             for (int k = 0; k < 4; ++k) {
                 int ax = x + NEIGH[k][0], ay = y + NEIGH[k][1];
                 if (!in_grid(ax, ay)) continue;
                 if (has_water(f, ax, ay))      { quench += QUENCH_RATE; wx = ax; wy = ay; }
-                // Ice chills a face as hard as water does, so a flow crusts
-                // against a sheet even before it has melted its way in.
-                else if (grid[ay][ax] == ICE)   { quench += QUENCH_RATE; ix = ax; iy = ay; }
+                // Ice is warmed by contact rather than treated as a quench sink:
+                // heat flows across the face proportional to the temperature gap
+                // (lava heat vs. ice at ~0) and conductivity, one face's worth per
+                // touching cell so a block wrapped on several sides melts faster.
+                // The lava loses exactly what the ice takes on (subtracted below),
+                // so the flow cools *because* it is melting — energy conserved —
+                // and the ice climbs toward its own melt threshold in ice.cpp.
+                else if (grid[ay][ax] == ICE)   {
+                    float xfer = ICE_COND * lh;
+                    ice_add_heat(ax, ay, xfer);
+                    iceLoss += xfer;
+                }
                 else if (grid[ay][ax] == SAND)  { sx = ax; sy = ay; }
                 else if (grid[ay][ax] == EMPTY) {
                     ++exposed;
@@ -174,6 +193,9 @@ void lava_update(FluidState& f, int frame, float dt) {
             float h = heat[y][x];
             h -= COOL_BASE + COOL_AIR * (float)exposed * 0.25f;
             h -= quench;
+            // Conductive loss to touched ice: exactly the heat the ice gained
+            // above, so the flow cools as it melts and no energy is invented.
+            h -= iceLoss;
 
             // Moving air carries heat off an open face far faster than still
             // air does, so a gust can freeze a flow where it stands.
@@ -187,17 +209,11 @@ void lava_update(FluidState& f, int frame, float dt) {
 
             if (h <= 0.0f) { freeze(x, y); continue; }
 
-            // Ice melts back into water. Paid for out of the same heat budget as
-            // sand, but with no MELT_MIN floor: anything still molten enough to
-            // be lava is molten enough to melt ice it is touching. The cell has
-            // to be cleared before it can be filled — fluid_add_density refuses
-            // to seed into anything the solver counts as solid.
-            if (ix >= 0 && rand01() < ICE_MELT_PROB) {
-                grid[iy][ix] = EMPTY;
-                fluid_add_density(f, ix, iy, 0.5f);
-                h -= MELT_COST;
-                if (h <= 0.0f) { freeze(x, y); continue; }
-            }
+            // Ice is no longer melted here by a coin-flip: the conduction above
+            // feeds each touched block's own heat store, and ice_update turns a
+            // block to water once it has taken on a full latent heat of fusion.
+            // That keeps melting progressive and driven by contact and time
+            // rather than an instant per-frame delete.
 
             // Melting is paid for out of this cell's own heat, and that cost is
             // what stops a flow from chain-reacting through a whole dune: a cell
