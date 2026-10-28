@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "renderer.h"
+#include "sweep.h"
 #include <cstdio>
 
 // ------------------------------------------------------------- layout ------
@@ -113,10 +114,59 @@ static void fill(SDL_Renderer* r, const SDL_Rect& rect, SDL_Color c) {
     SDL_RenderFillRect(r, &rect);
 }
 
+// Outline of a circle, one point per octant step (midpoint algorithm), so the
+// ring stays one pixel thick at every radius.
+static void ring(SDL_Renderer* r, int cx, int cy, int rad) {
+    int x = rad, y = 0, err = 1 - rad;
+    while (x >= y) {
+        const SDL_Point pts[8] = {
+            {cx + x, cy + y}, {cx - x, cy + y}, {cx + x, cy - y}, {cx - x, cy - y},
+            {cx + y, cy + x}, {cx - y, cy + x}, {cx + y, cy - x}, {cx - y, cy - x},
+        };
+        SDL_RenderDrawPoints(r, pts, 8);
+        ++y;
+        if (err < 0) err += 2 * y + 1;
+        else { --x; err += 2 * (y - x) + 1; }
+    }
+}
+
+// The eraser's footprint, drawn over the sim wherever the pointer is while
+// erasing is on. It marks the same disc paint_at clears: centred on the middle
+// of the cell under the cursor, reaching the edge of the cells brushRadius away.
+// A dark ring around a light one, so it reads over water, sand, and empty
+// background alike. While cells are actually being removed — a held E, or the
+// button down with ERASE latched — the inside is tinted too.
+static void draw_erase_cursor(SDL_Renderer* r, const InputState& s) {
+    if (!input_erasing(s)) return;
+    int sx, sy;
+    if (!renderer_logical_to_sim(s.mouseX, s.mouseY, &sx, &sy)) return;
+
+    const int cx = PANEL_W + (sx / CELL_SIZE) * CELL_SIZE + CELL_SIZE / 2;
+    const int cy = (sy / CELL_SIZE) * CELL_SIZE + CELL_SIZE / 2;
+    const int rad = s.brushRadius * CELL_SIZE + CELL_SIZE / 2;
+
+    if (s.eraseHeld || s.isDrawing) {
+        SDL_SetRenderDrawColor(r, C_ERASE.r, C_ERASE.g, C_ERASE.b, 50);
+        for (int dy = -rad; dy <= rad; ++dy) {
+            int half = 0;
+            while ((half + 1) * (half + 1) + dy * dy <= rad * rad) ++half;
+            SDL_RenderDrawLine(r, cx - half, cy + dy, cx + half, cy + dy);
+        }
+    }
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 160);
+    ring(r, cx, cy, rad + 1);
+    SDL_SetRenderDrawColor(r, 255, 255, 255, 220);
+    ring(r, cx, cy, rad);
+}
+
 void ui_draw(SDL_Renderer* renderer, const InputState& state) {
     // draw_wind leaves the draw blend mode at NONE and draw_grid_lines leaves
     // the color set, so set both rather than inheriting whatever the sim left.
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // Before the panel, so a ring overhanging the menu's edge is covered by it
+    // rather than drawn across the buttons.
+    draw_erase_cursor(renderer, state);
 
     const SDL_Rect panel = {0, 0, PANEL_W, HEIGHT};
     fill(renderer, panel, PANEL_BG);
@@ -208,7 +258,7 @@ bool ui_click(InputState& state, FluidState& fluid, int lx, int ly) {
                 state.eraseSticky = !state.eraseSticky;
                 break;
             case UI_CLEAR:
-                input_clear_all(fluid);
+                sweep_start();
                 break;
             case UI_BRUSH_DEC:
                 if (state.brushRadius > BRUSH_MIN) state.brushRadius--;

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./build/fluid-simulation.exe)",
+      "Bash(jobs -l)",
+      "Bash(kill 1026)",
+      "Bash(pkg-config --exists sdl2)",
+      "Bash(pkg-config --exists SDL2_ttf)",
+      "Bash(g++ -std=c++14 -fsyntax-only ice.cpp)",
+      "Bash(g++ -std=c++14 -fsyntax-only lava.cpp)",
+      "Bash(sudo apt-get install -y g++-mingw-w64-x86-64)",
+      "Bash(git add *)",
+      "Bash(git config *)"
+    ]
+  }
+}

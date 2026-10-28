@@ -1,4 +1,4 @@
-SRC = main.cpp fluid.cpp sand.cpp wind.cpp lava.cpp ice.cpp renderer.cpp input.cpp ui.cpp
+SRC = main.cpp fluid.cpp sand.cpp wind.cpp lava.cpp ice.cpp renderer.cpp input.cpp ui.cpp sweep.cpp
 TARGET = build/fluid-simulation
 # Queried separately so a missing SDL2_ttf fails with a clear error about the
 # font header, instead of silently taking the core SDL2 flags down with it.

@@ -2,6 +2,7 @@
 #include "wind.h"
 #include "lava.h"
 #include "ice.h"
+#include "sweep.h"
 #include "font_silkscreen.h"
 #include <SDL_ttf.h>
 #include <vector>
@@ -1002,6 +1003,7 @@ void renderer_draw(SDL_Renderer* renderer, const FluidState& fluid, bool showGri
     if (lava_active() && draw_lava(renderer))
         draw_glow(renderer);
     draw_wind(renderer);
+    sweep_draw(renderer);  // the CLEAR wipe, over everything it is erasing
     if (showGrid)
         draw_grid_lines(renderer);
 

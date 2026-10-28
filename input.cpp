@@ -2,6 +2,7 @@
 #include "wind.h"
 #include "lava.h"
 #include "ice.h"
+#include "sweep.h"     // C wipes the scene with the sweep, not instantly
 #include "renderer.h"  // window -> simulation pixel mapping
 #include "ui.h"        // the tool menu gets first refusal on a click
 #include <cstring>
@@ -182,7 +183,7 @@ bool input_handle_event(InputState& state, const SDL_Event& event, FluidState& f
                 fluid_reset(fluid);
                 break;
             case SDLK_c:
-                input_clear_all(fluid);
+                sweep_start();
                 break;
         }
     }

@@ -8,6 +8,7 @@
 #include "wind.h"
 #include "lava.h"
 #include "ice.h"
+#include "sweep.h"
 #include "renderer.h"
 #include "input.h"
 #include "ui.h"
@@ -156,6 +157,9 @@ int main(int argc, char* argv[]) {
         }
 
         frameCount++;
+        // The CLEAR wipe goes first, so the solvers never step material the bar
+        // has already swept away this frame.
+        sweep_update(fluid);
         // Lava first: it resolves melts and freezes before sand decides what it
         // can fall into, so a grain never lands in a cell that is about to
         // become rock underneath it.

@@ -43,8 +43,9 @@ struct InputState {
 inline bool input_erasing(const InputState& s) { return s.eraseHeld || s.eraseSticky; }
 
 // Wipe the scene: every particle, every cell, the heat behind the lava and the
-// standing wind. Shared by the C key and the menu's CLEAR button so the two
-// cannot drift apart.
+// standing wind, all at once. The C key and the menu's CLEAR button don't call
+// this directly any more — they start the sweep (sweep.h), which finishes with
+// it, so the animated wipe always ends in exactly this state.
 void input_clear_all(FluidState& fluid);
 
 void input_init(InputState& state);
